@@ -120,3 +120,18 @@ exports.addConversationLog = async (req, res) => {
     sendResponse(res, 400, false, error.message);
   }
 };
+
+exports.deleteClient = async (req, res) => {
+  try {
+    const client = await Client.findByIdAndDelete(req.params.id);
+    if (!client) return sendResponse(res, 404, false, 'Client not found');
+
+    // Delete associated audit logs
+    await AuditLog.deleteMany({ clientId: req.params.id });
+
+    sendResponse(res, 200, true, 'Client deleted successfully');
+  } catch (error) {
+    console.error('Error in deleteClient:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};

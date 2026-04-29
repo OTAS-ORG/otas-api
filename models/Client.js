@@ -8,6 +8,8 @@ const conversationLogSchema = new mongoose.Schema({
 const clientSchema = new mongoose.Schema({
   // Pre-Sale Fields
   companyName: { type: String, required: true },
+  industry: { type: String },
+  backgroundNote: { type: String },
   contactPerson: { type: String, required: true },
   contactInfo: { type: String, required: true }, // Phone/Email
   inquiryDate: { type: Date, required: true },
@@ -27,7 +29,9 @@ const clientSchema = new mongoose.Schema({
       'Sent Contract', 
       'Signed', 
       'Ghosted', 
-      'Follow-up needed'
+      'Follow-up needed',
+      'In-Development',
+      'Delivered'
     ],
     default: 'Inquiry'
   },
