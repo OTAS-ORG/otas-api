@@ -5,6 +5,8 @@ const morgan = require('morgan');
 require('dotenv').config();
 
 const clientRoutes = require('./routes/clientRoutes');
+const formRoutes = require('./routes/formRoutes');
+const publicRoutes = require('./routes/publicRoutes');
 const authRoutes = require('./routes/authRoutes');
 const User = require('./models/User');
 
@@ -17,6 +19,8 @@ app.use(morgan('dev'));
 
 // Routes
 app.use('/api/clients', clientRoutes);
+app.use('/api/client-form', formRoutes);
+app.use('/api/public', publicRoutes);
 app.use('/api/auth', authRoutes);
 
 // Database Connection & Seeder

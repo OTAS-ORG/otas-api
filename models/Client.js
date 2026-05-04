@@ -6,8 +6,14 @@ const conversationLogSchema = new mongoose.Schema({
 });
 
 const clientSchema = new mongoose.Schema({
+  // New Fields for Client Form
+  name: { type: String },
+  email: { type: String },
+  businessName: { type: String },
+
   // Pre-Sale Fields
   companyName: { type: String, required: true },
+
   industry: { type: String },
   backgroundNote: { type: String },
   contactPerson: { type: String, required: true },
@@ -51,7 +57,18 @@ const clientSchema = new mongoose.Schema({
   // Multi-department logging (stored in conversationLogs for now, or separate if needed)
   // For v1.0, we'll use conversationLogs for all department notes as well.
 
-}, { timestamps: true });
+}, { 
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
+});
+
+// Virtual for submissions
+clientSchema.virtual('submissions', {
+  ref: 'Submission',
+  localField: '_id',
+  foreignField: 'clientId'
+});
 
 // Auto-migration logic: Triggered when status changes to 'Signed'
 clientSchema.pre('save', async function() {
