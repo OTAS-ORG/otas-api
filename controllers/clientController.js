@@ -3,11 +3,12 @@ const AuditLog = require('../models/AuditLog');
 const sendResponse = require('../utils/response');
 
 // Helper to create audit log
-const createAudit = async (clientId, action, details) => {
+const createAudit = async (clientId, action, details, user) => {
   await AuditLog.create({
     clientId,
     action,
-    details
+    details,
+    user: user || 'Core Team'
   });
 };
 
@@ -63,7 +64,7 @@ exports.createClient = async (req, res) => {
     
     await createAudit(savedClient._id, 'CREATE', { 
       message: 'Client created'
-    });
+    }, req.user?.username);
     
     sendResponse(res, 201, true, 'Client created successfully', savedClient);
   } catch (error) {
@@ -89,11 +90,11 @@ exports.updateClient = async (req, res) => {
       await createAudit(updatedClient._id, 'STATUS_CHANGE', {
         oldStatus: oldStatus,
         newStatus: updatedClient.status
-      });
+      }, req.user?.username);
     } else {
       await createAudit(updatedClient._id, 'UPDATE', {
         changes: req.body
-      });
+      }, req.user?.username);
     }
 
     sendResponse(res, 200, true, 'Client updated successfully', updatedClient);
@@ -112,7 +113,7 @@ exports.addConversationLog = async (req, res) => {
     client.conversationLogs.push({ text });
     await client.save();
 
-    await createAudit(client._id, 'LOG_ADDED', { text });
+    await createAudit(client._id, 'LOG_ADDED', { text }, req.user?.username);
 
     sendResponse(res, 200, true, 'Log added successfully', client);
   } catch (error) {
