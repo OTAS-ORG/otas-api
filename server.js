@@ -8,6 +8,8 @@ const clientRoutes = require('./routes/clientRoutes');
 const formRoutes = require('./routes/formRoutes');
 const publicRoutes = require('./routes/publicRoutes');
 const authRoutes = require('./routes/authRoutes');
+const invoiceRoutes = require('./routes/invoiceRoutes');
+const passwordRoutes = require('./routes/passwordRoutes');
 const User = require('./models/User');
 
 const app = express();
@@ -22,6 +24,8 @@ app.use('/api/clients', clientRoutes);
 app.use('/api/client-form', formRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/invoices', invoiceRoutes);
+app.use('/api/passwords', passwordRoutes);
 
 // Database Connection & Seeder
 const connectDB = async () => {
