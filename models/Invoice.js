@@ -2,9 +2,12 @@ const mongoose = require('mongoose');
 
 const invoiceItemSchema = new mongoose.Schema({
   description: { type: String, required: true },
-  quantity: { type: Number, required: true, default: 1 },
-  unitPrice: { type: Number, required: true },
-  amount: { type: Number, required: true }
+  quantity: { type: Number, default: 1 },
+  unitPrice: { type: Number },
+  amount: { type: Number, required: true },
+  paymentTerm: { type: String },
+  startDate: { type: Date },
+  endDate: { type: Date }
 });
 
 const paymentDetailSchema = new mongoose.Schema({
@@ -18,6 +21,8 @@ const paymentDetailSchema = new mongoose.Schema({
 
 const invoiceSchema = new mongoose.Schema({
   invoiceNumber: { type: String, required: true, unique: true },
+  type: { type: String, enum: ['customize_project', 'service_fee'], default: 'customize_project' },
+  serviceType: { type: String, enum: ['server', 'domain', 'maintenance'] },
   clientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client' },
 
   // Denormalized client info

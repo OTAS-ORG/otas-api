@@ -14,5 +14,6 @@ router.post('/:id/payment', invoiceController.confirmPayment);
 router.post('/:id/payout', invoiceController.confirmPayout);
 router.post('/:id/lock', invoiceController.lockInvoice);
 router.post('/:id/unlock', invoiceController.unlockInvoice);
+router.delete('/:id', invoiceController.deleteInvoice);
 
 module.exports = router;

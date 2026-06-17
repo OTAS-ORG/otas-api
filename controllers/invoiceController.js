@@ -3,10 +3,31 @@ const Client = require('../models/Client');
 const AuditLog = require('../models/AuditLog');
 const sendResponse = require('../utils/response');
 
-const generateInvoiceNumber = async () => {
-  const count = await Invoice.countDocuments();
-  const padded = String(count + 1).padStart(4, '0');
-  return `INV-${padded}`;
+const generateInvoiceNumber = async (type, serviceType) => {
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const datePart = `${dd}${mm}`;
+
+  let prefix = '';
+  let query = {};
+  if (type === 'service_fee' && serviceType) {
+    prefix = { server: 'SVF', domain: 'DMF', maintenance: 'MTF' }[serviceType] || 'SRV';
+    query = { type: 'service_fee', serviceType };
+  } else {
+    query = { type: { $ne: 'service_fee' } };
+  }
+
+  const lastInvoice = await Invoice.findOne().sort({ createdAt: -1 }).select('invoiceNumber');
+  let counter = 1;
+  if (lastInvoice && lastInvoice.invoiceNumber) {
+    const lastNum = lastInvoice.invoiceNumber.slice(-4);
+    const lastCounter = parseInt(lastNum, 10);
+    if (!isNaN(lastCounter)) {
+      counter = lastCounter + 1;
+    }
+  }
+  return `INV-${prefix}${prefix ? '-' : ''}${datePart}${String(counter).padStart(4, '0')}`;
 };
 
 const createAudit = async (invoiceId, action, details, user) => {
@@ -20,10 +41,11 @@ const createAudit = async (invoiceId, action, details, user) => {
 
 exports.getInvoices = async (req, res) => {
   try {
-    const { search, status } = req.query;
+    const { search, status, type } = req.query;
     let query = {};
 
     if (status) query.status = status;
+    if (type) query.type = type;
 
     if (search) {
       query.$or = [
@@ -55,7 +77,7 @@ exports.getInvoiceById = async (req, res) => {
 
 exports.createInvoice = async (req, res) => {
   try {
-    const invoiceNumber = await generateInvoiceNumber();
+    const invoiceNumber = await generateInvoiceNumber(req.body.type, req.body.serviceType);
     const invoiceData = { ...req.body, invoiceNumber };
     if (req.user) invoiceData.createdBy = req.user._id;
 
@@ -68,7 +90,7 @@ exports.createInvoice = async (req, res) => {
     if (invoiceData.items) {
       invoiceData.items = invoiceData.items.map(item => ({
         ...item,
-        amount: item.quantity * item.unitPrice
+        amount: item.amount || (item.quantity || 1) * (item.unitPrice || 0)
       }));
     }
 
@@ -104,7 +126,7 @@ exports.updateInvoice = async (req, res) => {
     if (updateData.items) {
       updateData.items = updateData.items.map(item => ({
         ...item,
-        amount: item.quantity * item.unitPrice
+        amount: item.amount || (item.quantity || 1) * (item.unitPrice || 0)
       }));
     }
 
@@ -215,5 +237,19 @@ exports.unlockInvoice = async (req, res) => {
   } catch (error) {
     console.error('Error in unlockInvoice:', error);
     sendResponse(res, 400, false, error.message);
+  }
+};
+
+exports.deleteInvoice = async (req, res) => {
+  try {
+    const invoice = await Invoice.findByIdAndDelete(req.params.id);
+    if (!invoice) return sendResponse(res, 404, false, 'Invoice not found');
+
+    await AuditLog.deleteMany({ clientId: req.params.id });
+
+    sendResponse(res, 200, true, 'Invoice deleted successfully');
+  } catch (error) {
+    console.error('Error in deleteInvoice:', error);
+    sendResponse(res, 500, false, error.message);
   }
 };
