@@ -29,7 +29,7 @@ exports.generateLink = async (req, res) => {
       createdBy: req.user._id,
     });
 
-    const link = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/onboarding/${token}`;
+    const link = `${process.env.FRONTEND_URL || 'https://otas-crm-dashboard.vercel.app'}/onboarding/${token}`;
 
     sendResponse(res, 201, true, 'Onboarding link generated', {
       link,
@@ -370,6 +370,21 @@ exports.getSubmissions = async (req, res) => {
     });
   } catch (error) {
     console.error('Error in getSubmissions:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
+exports.getSubmission = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const submission = await Submission.findById(id)
+      .populate('clientId', 'companyName contactPerson contactInfo email');
+    if (!submission) {
+      return sendResponse(res, 404, false, 'Submission not found');
+    }
+    sendResponse(res, 200, true, 'Submission retrieved', submission);
+  } catch (error) {
+    console.error('Error in getSubmission:', error);
     sendResponse(res, 500, false, error.message);
   }
 };

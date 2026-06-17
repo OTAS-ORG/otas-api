@@ -21,6 +21,7 @@ router.post('/config/import', onboardingController.importConfig);
 router.put('/config/:serviceType/reorder-sections', onboardingController.reorderSections);
 router.put('/config/:serviceType/sections/:sectionIndex/reorder-fields', onboardingController.reorderFields);
 router.get('/submissions', onboardingController.getSubmissions);
+router.get('/submissions/:id', onboardingController.getSubmission);
 router.put('/submissions/:id/status', onboardingController.updateSubmissionStatus);
 
 module.exports = router;
