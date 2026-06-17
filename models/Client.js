@@ -54,6 +54,13 @@ const clientSchema = new mongoose.Schema({
   projectDeliveryDate: { type: Date },
   deliverablesSummary: { type: String },
 
+  // Purchased Services
+  purchasedServices: [{
+    type: { type: String, enum: ['pos', 'ai_agent', 'erp', 'ecommerce', 'software'] },
+    name: { type: String },
+    status: { type: String, enum: ['pending', 'active', 'completed'], default: 'pending' }
+  }],
+
   // Multi-department logging (stored in conversationLogs for now, or separate if needed)
   // For v1.0, we'll use conversationLogs for all department notes as well.
 

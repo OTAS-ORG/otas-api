@@ -10,7 +10,9 @@ const publicRoutes = require('./routes/publicRoutes');
 const authRoutes = require('./routes/authRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const passwordRoutes = require('./routes/passwordRoutes');
+const onboardingRoutes = require('./routes/onboardingRoutes');
 const User = require('./models/User');
+const seedFormConfigs = require('./seeders/formConfigSeeder');
 
 const app = express();
 
@@ -26,6 +28,7 @@ app.use('/api/public', publicRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/passwords', passwordRoutes);
+app.use('/api/onboarding', onboardingRoutes);
 
 // Database Connection & Seeder
 const connectDB = async () => {
@@ -45,6 +48,9 @@ const connectDB = async () => {
       });
       console.log('Default admin user created');
     }
+
+    // Seed default onboarding form configs
+    await seedFormConfigs();
   } catch (err) {
     console.error('MongoDB connection error:', err);
   }
