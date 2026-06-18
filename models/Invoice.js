@@ -36,6 +36,8 @@ const invoiceSchema = new mongoose.Schema({
 
   // Financials
   amount: { type: Number, required: true },
+  currency: { type: String, enum: ['MMK', 'USD'], default: 'MMK' },
+  exchangeRate: { type: Number, default: 0 },
   platformFeeRate: { type: Number, default: 0 },
   platformFee: { type: Number, default: 0 },
   additionalCharges: [{
