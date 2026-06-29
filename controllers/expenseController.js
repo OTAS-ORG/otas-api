@@ -1,5 +1,6 @@
 const Expense = require('../models/Expense');
 const ExpenseCategory = require('../models/ExpenseCategory');
+const ExpenseDepartment = require('../models/ExpenseDepartment');
 const AuditLog = require('../models/AuditLog');
 const sendResponse = require('../utils/response');
 
@@ -16,7 +17,7 @@ const createAudit = async (expenseId, action, details, user) => {
 
 exports.getExpenses = async (req, res) => {
   try {
-    const { dateFrom, dateTo, category, search, page = 1, limit = 50 } = req.query;
+    const { dateFrom, dateTo, category, search, status, department, page = 1, limit = 50 } = req.query;
     const query = {};
 
     if (dateFrom || dateTo) {
@@ -25,6 +26,8 @@ exports.getExpenses = async (req, res) => {
       if (dateTo) query.date.$lte = new Date(dateTo + 'T23:59:59.999Z');
     }
     if (category) query.category = category;
+    if (status) query.status = status;
+    if (department) query.department = department;
     if (search) {
       query.$or = [
         { description: { $regex: search, $options: 'i' } },
@@ -68,13 +71,21 @@ exports.getExpenseById = async (req, res) => {
 
 exports.createExpense = async (req, res) => {
   try {
-    const { description, amount, currency, exchangeRate, category, paymentMethod, clientId, notes, date } = req.body;
+    const { description, amount, currency, exchangeRate, category, department, paymentMethod, clientId, notes, date, status } = req.body;
 
     // Auto-save category if new
     if (category) {
       const exists = await ExpenseCategory.findOne({ name: category });
       if (!exists) {
         await ExpenseCategory.create({ name: category, createdBy: req.user?._id });
+      }
+    }
+
+    // Auto-save department if new
+    if (department) {
+      const deptExists = await ExpenseDepartment.findOne({ name: department });
+      if (!deptExists) {
+        await ExpenseDepartment.create({ name: department, createdBy: req.user?._id });
       }
     }
 
@@ -85,9 +96,11 @@ exports.createExpense = async (req, res) => {
       currency: currency || 'MMK',
       exchangeRate: exchangeRate || 0,
       category,
+      department,
       paymentMethod,
       clientId: clientId || undefined,
       notes,
+      status: status || 'Pending',
       createdBy: req.user?._id
     });
 
@@ -107,7 +120,7 @@ exports.createExpense = async (req, res) => {
 
 exports.updateExpense = async (req, res) => {
   try {
-    const { description, amount, currency, exchangeRate, category, paymentMethod, clientId, notes, date } = req.body;
+    const { description, amount, currency, exchangeRate, category, department, paymentMethod, clientId, notes, date, status } = req.body;
 
     // Auto-save category if new
     if (category) {
@@ -117,9 +130,17 @@ exports.updateExpense = async (req, res) => {
       }
     }
 
+    // Auto-save department if new
+    if (department) {
+      const deptExists = await ExpenseDepartment.findOne({ name: department });
+      if (!deptExists) {
+        await ExpenseDepartment.create({ name: department, createdBy: req.user?._id });
+      }
+    }
+
     const expense = await Expense.findByIdAndUpdate(
       req.params.id,
-      { date, description, amount, currency, exchangeRate, category, paymentMethod, clientId: clientId || undefined, notes },
+      { date, description, amount, currency, exchangeRate, category, department, paymentMethod, clientId: clientId || undefined, notes, status },
       { new: true, runValidators: true }
     )
       .populate('clientId', 'companyName')
@@ -257,6 +278,16 @@ exports.getExpenseSummary = async (req, res) => {
     });
   } catch (error) {
     console.error('Error in getExpenseSummary:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
+exports.getDepartments = async (req, res) => {
+  try {
+    const departments = await ExpenseDepartment.find().sort({ name: 1 });
+    sendResponse(res, 200, true, 'Departments retrieved successfully', departments);
+  } catch (error) {
+    console.error('Error in getDepartments:', error);
     sendResponse(res, 500, false, error.message);
   }
 };

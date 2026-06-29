@@ -13,7 +13,9 @@ const passwordRoutes = require('./routes/passwordRoutes');
 const onboardingRoutes = require('./routes/onboardingRoutes');
 const expenseRoutes = require('./routes/expenseRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
+const ticketRoutes = require('./routes/ticketRoutes');
 const User = require('./models/User');
+const Department = require('./models/Department');
 const seedFormConfigs = require('./seeders/formConfigSeeder');
 
 const app = express();
@@ -33,6 +35,7 @@ app.use('/api/passwords', passwordRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/analytics', analyticsRoutes);
+app.use('/api/tickets', ticketRoutes);
 
 // Database Connection & Seeder
 const connectDB = async () => {
@@ -51,6 +54,42 @@ const connectDB = async () => {
         role: 'Admin'
       });
       console.log('Default admin user created');
+    }
+
+    // Seed default departments if none exist
+    const deptCount = await Department.countDocuments();
+    if (deptCount === 0) {
+      await Department.insertMany([
+        { name: 'IT' },
+        { name: 'HR' },
+        { name: 'Sales' },
+        { name: 'Finance' },
+        { name: 'BD' },
+        { name: 'PD' },
+        { name: 'DQA' },
+        { name: 'Marketing' },
+      { name: 'Design' }
+      ]);
+      console.log('Default departments created');
+    }
+
+    // Auto-assign department to users based on role (if not already assigned)
+    const roleDeptMap = {
+      'Sales': 'Sales',
+      'BD': 'BD',
+      'PD': 'PD',
+      'DQA': 'DQA',
+      'Marketing': 'Marketing',
+      'Design': 'Design'
+    };
+    for (const [role, deptName] of Object.entries(roleDeptMap)) {
+      const dept = await Department.findOne({ name: deptName });
+      if (dept) {
+        await User.updateMany(
+          { role, departments: { $ne: dept._id } },
+          { $addToSet: { departments: dept._id } }
+        );
+      }
     }
 
     // Seed default onboarding form configs

@@ -62,6 +62,49 @@ exports.setVaultPin = async (req, res) => {
   }
 };
 
+exports.getAllUsers = async (req, res) => {
+  try {
+    if (req.user.role !== 'Admin') {
+      return sendResponse(res, 403, false, 'Admin access required');
+    }
+    const users = await User.find()
+      .select('-password -vaultPin')
+      .populate('departments', 'name')
+      .sort({ username: 1 });
+    sendResponse(res, 200, true, 'Users fetched successfully', users);
+  } catch (error) {
+    console.error('Error in getAllUsers:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
+exports.updateUserDepartments = async (req, res) => {
+  try {
+    if (req.user.role !== 'Admin') {
+      return sendResponse(res, 403, false, 'Admin access required');
+    }
+    const { id } = req.params;
+    const { department_ids } = req.body;
+
+    const user = await User.findById(id);
+    if (!user) {
+      return sendResponse(res, 404, false, 'User not found');
+    }
+
+    user.departments = department_ids || [];
+    await user.save();
+
+    const updated = await User.findById(id)
+      .select('-password -vaultPin')
+      .populate('departments', 'name');
+
+    sendResponse(res, 200, true, 'User departments updated successfully', updated);
+  } catch (error) {
+    console.error('Error in updateUserDepartments:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
 exports.verifyVaultPin = async (req, res) => {
   try {
     const user = await User.findById(req.user._id);

@@ -6,6 +6,7 @@ const { protect } = require('../middleware/authMiddleware');
 router.use(protect);
 
 router.get('/summary', expenseController.getExpenseSummary);
+router.get('/departments', expenseController.getDepartments);
 router.get('/categories', expenseController.getCategories);
 router.post('/categories', expenseController.createCategory);
 router.delete('/categories/:id', expenseController.deleteCategory);

@@ -6,9 +6,11 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: { 
     type: String, 
-    enum: ['Admin', 'Sales', 'DQA', 'PD', 'BD', 'Marketing'], 
+    enum: ['Admin', 'Sales', 'DQA', 'PD', 'BD', 'Marketing', 'Design'], 
     default: 'Admin' 
   },
+  department_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
+  departments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Department' }],
   vaultPin: { type: String }
 }, { timestamps: true });
 

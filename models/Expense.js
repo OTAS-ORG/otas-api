@@ -7,9 +7,15 @@ const expenseSchema = new mongoose.Schema({
   currency: { type: String, enum: ['MMK', 'USD'], default: 'MMK' },
   exchangeRate: { type: Number, default: 0 },
   category: { type: String, required: true },
+  department: { type: String },
   paymentMethod: { type: String },
   clientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client' },
   notes: { type: String },
+  status: {
+    type: String,
+    enum: ['Pending', 'Approved', 'Rejected'],
+    default: 'Pending'
+  },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 
