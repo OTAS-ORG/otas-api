@@ -14,6 +14,7 @@ const onboardingRoutes = require('./routes/onboardingRoutes');
 const expenseRoutes = require('./routes/expenseRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
+const salaryRoutes = require('./routes/salaryRoutes');
 const User = require('./models/User');
 const Department = require('./models/Department');
 const seedFormConfigs = require('./seeders/formConfigSeeder');
@@ -36,6 +37,7 @@ app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/tickets', ticketRoutes);
+app.use('/api/salaries', salaryRoutes);
 
 // Database Connection & Seeder
 const connectDB = async () => {
