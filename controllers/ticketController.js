@@ -10,6 +10,9 @@ const createHistory = async (ticket_id, user_id, action_performed) => {
 
 exports.getTickets = async (req, res) => {
   try {
+    if (req.user.role === 'Sales') {
+      return sendResponse(res, 403, false, 'Access denied');
+    }
     const { search, status } = req.query;
     const filter = {};
 
@@ -75,6 +78,9 @@ exports.getTicketById = async (req, res) => {
 
 exports.createTicket = async (req, res) => {
   try {
+    if (req.user.role === 'Sales') {
+      return sendResponse(res, 403, false, 'Access denied');
+    }
     const { title, description, priority, department_id } = req.body;
 
     const ticket = await Ticket.create({
