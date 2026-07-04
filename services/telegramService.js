@@ -1,5 +1,7 @@
 const { TelegramBot } = require('node-telegram-bot-api');
 const Ticket = require('../models/Ticket');
+const Task = require('../models/Task');
+const Project = require('../models/Project');
 const User = require('../models/User');
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -96,6 +98,64 @@ const notifyTicketAssigned = async (ticketId) => {
 };
 
 /**
+ * Send task assignment notification to the assigned developer's Telegram.
+ */
+const notifyTaskAssigned = async (taskId) => {
+  if (!bot) return;
+
+  try {
+    const task = await Task.findById(taskId)
+      .populate('assignedTo', 'username')
+      .populate('qaAssignedTo', 'username');
+
+    if (!task || !task.assignedTo) {
+      console.log('Telegram notify: task or assigned user not found');
+      return;
+    }
+
+    const project = await Project.findById(task.projectId);
+    const assignedUser = await User.findById(task.assignedTo._id);
+    if (!assignedUser?.telegramChatId) {
+      console.log(`Telegram: No linked chat for ${task.assignedTo.username}.`);
+      return;
+    }
+
+    const chatId = assignedUser.telegramChatId;
+    const assignedName = task.assignedTo.username;
+    const projectName = project?.name || 'Unknown';
+    const statusLabels = { backlog: 'Backlog', todo: 'To Do', 'in-progress': 'In Progress', 'code-review': 'Code Review', 'qa-testing': 'QA Testing', done: 'Done' };
+    const priorityLabels = { urgent: 'Urgent', high: 'High', normal: 'Normal', low: 'Low' };
+
+    const message = [
+      '🎫 *New Task Assigned*',
+      '',
+      `*Project:* ${projectName}`,
+      `*Task:* ${task.title}`,
+      `*Priority:* ${priorityLabels[task.priority] || task.priority}`,
+      `*Status:* ${statusLabels[task.status] || task.status}`,
+      `*Assigned to:* ${assignedName}`,
+      task.due_date ? `*Due:* ${new Date(task.due_date).toLocaleDateString()}` : null,
+    ].filter(Boolean).join('\n');
+
+    const buttons = [];
+    const sdlcStatuses = ['todo', 'in-progress', 'code-review', 'qa-testing', 'done'];
+    for (const s of sdlcStatuses) {
+      if (task.status !== s) {
+        buttons.push({ text: `🟢 ${statusLabels[s]}`, callback_data: `task:${taskId}:${s}` });
+      }
+    }
+
+    await bot.sendMessage(chatId, message, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [buttons] },
+    });
+    console.log(`Telegram task notification sent to ${assignedName} for: ${task.title}`);
+  } catch (error) {
+    console.error('Failed to send task Telegram notification:', error.message);
+  }
+};
+
+/**
  * Handle inline button clicks from Telegram.
  * Callback data format: "ticket:{ticketId}:{newStatus}"
  * In webhook mode, triggered via bot.processUpdate(req.body) in the webhook route.
@@ -105,68 +165,133 @@ const registerCallbackHandler = () => {
 
   bot.on('callback_query', async (query) => {
     const { data, message } = query;
-    if (!data || !data.startsWith('ticket:')) return;
+    if (!data) return;
 
-    const parts = data.split(':');
-    if (parts.length !== 3) return;
+    // Handle ticket: prefix (support tickets)
+    if (data.startsWith('ticket:')) {
+      const parts = data.split(':');
+      if (parts.length !== 3) return;
 
-    const ticketId = parts[1];
-    const newStatus = parts[2];
+      const ticketId = parts[1];
+      const newStatus = parts[2];
 
-    try {
-      const ticket = await Ticket.findByIdAndUpdate(
-        ticketId,
-        { status: newStatus },
-        { new: true }
-      )
-        .populate('assigned_to', 'username')
-        .populate('department_id', 'name')
-        .populate('created_by', 'username');
+      try {
+        const ticket = await Ticket.findByIdAndUpdate(
+          ticketId,
+          { status: newStatus },
+          { new: true }
+        )
+          .populate('assigned_to', 'username')
+          .populate('department_id', 'name')
+          .populate('created_by', 'username');
 
-      if (!ticket) {
-        await bot.answerCallbackQuery(query.id, { text: '❌ Ticket not found' });
-        return;
+        if (!ticket) {
+          await bot.answerCallbackQuery(query.id, { text: '❌ Ticket not found' });
+          return;
+        }
+
+        const assignedName = ticket.assigned_to?.username || 'Unassigned';
+        const deptName = ticket.department_id?.name || 'No department';
+
+        const updatedMessage = [
+          '🎫 *Ticket Updated*',
+          '',
+          `*Title:* ${ticket.title}`,
+          `*Description:* ${ticket.description}`,
+          `*Priority:* ${ticket.priority}`,
+          `*Status:* ${newStatus} ✅`,
+          `*Assigned to:* ${assignedName}`,
+          `*Department:* ${deptName}`,
+          `*Created by:* ${ticket.created_by?.username || 'Unknown'}`,
+        ].join('\n');
+
+        const buttons = [];
+        if (newStatus !== 'In Progress') {
+          buttons.push({ text: '🟡 In Progress', callback_data: `ticket:${ticketId}:In Progress` });
+        }
+        if (newStatus !== 'Resolved') {
+          buttons.push({ text: '✅ Resolved', callback_data: `ticket:${ticketId}:Resolved` });
+        }
+        if (newStatus !== 'Pending') {
+          buttons.push({ text: '⏸ Pending', callback_data: `ticket:${ticketId}:Pending` });
+        }
+
+        await bot.editMessageText(updatedMessage, {
+          chat_id: message.chat.id,
+          message_id: message.message_id,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons.length > 0 ? [buttons] : [] },
+        });
+
+        await bot.answerCallbackQuery(query.id, { text: `✅ Status changed to ${newStatus}` });
+      } catch (error) {
+        console.error('Error handling ticket callback query:', error);
+        await bot.answerCallbackQuery(query.id, { text: '❌ Error updating ticket' });
       }
+      return;
+    }
 
-      const assignedName = ticket.assigned_to?.username || 'Unassigned';
-      const deptName = ticket.department_id?.name || 'No department';
+    // Handle task: prefix (SDLC task status)
+    if (data.startsWith('task:')) {
+      const parts = data.split(':');
+      if (parts.length !== 3) return;
 
-      const updatedMessage = [
-        '🎫 *Ticket Updated*',
-        '',
-        `*Title:* ${ticket.title}`,
-        `*Description:* ${ticket.description}`,
-        `*Priority:* ${ticket.priority}`,
-        `*Status:* ${newStatus} ✅`,
-        `*Assigned to:* ${assignedName}`,
-        `*Department:* ${deptName}`,
-        `*Created by:* ${ticket.created_by?.username || 'Unknown'}`,
-      ].join('\n');
+      const taskId = parts[1];
+      const newStatus = parts[2];
 
-      const buttons = [];
-      if (newStatus !== 'In Progress') {
-        buttons.push({ text: '🟡 In Progress', callback_data: `ticket:${ticketId}:In Progress` });
+      try {
+        const task = await Task.findByIdAndUpdate(
+          taskId,
+          { status: newStatus },
+          { new: true }
+        )
+          .populate('assignedTo', 'username');
+
+        if (!task) {
+          await bot.answerCallbackQuery(query.id, { text: '❌ Task not found' });
+          return;
+        }
+
+        const project = await Project.findById(task.projectId);
+        const projectName = project?.name || 'Unknown';
+        const assignedName = task.assignedTo?.username || 'Unassigned';
+        const priorityLabels = { urgent: 'Urgent', high: 'High', normal: 'Normal', low: 'Low' };
+        const statusLabels = { backlog: 'Backlog', todo: 'To Do', 'in-progress': 'In Progress', 'code-review': 'Code Review', 'qa-testing': 'QA Testing', done: 'Done' };
+
+        const updatedMessage = [
+          '🎫 *Task Updated*',
+          '',
+          `*Project:* ${projectName}`,
+          `*Task:* ${task.title}`,
+          `*Priority:* ${priorityLabels[task.priority] || task.priority}`,
+          `*Status:* ${statusLabels[newStatus] || newStatus} ✅`,
+          `*Assigned to:* ${assignedName}`,
+          task.due_date ? `*Due:* ${new Date(task.due_date).toLocaleDateString()}` : null,
+        ].filter(Boolean).join('\n');
+
+        const buttons = [];
+        const sdlcStatuses = ['todo', 'in-progress', 'code-review', 'qa-testing', 'done'];
+        for (const s of sdlcStatuses) {
+          if (newStatus !== s) {
+            buttons.push({ text: `🟢 ${statusLabels[s]}`, callback_data: `task:${taskId}:${s}` });
+          }
+        }
+
+        await bot.editMessageText(updatedMessage, {
+          chat_id: message.chat.id,
+          message_id: message.message_id,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: buttons.length > 0 ? [buttons] : [] },
+        });
+
+        await bot.answerCallbackQuery(query.id, { text: `✅ Status changed to ${statusLabels[newStatus] || newStatus}` });
+      } catch (error) {
+        console.error('Error handling task callback query:', error);
+        await bot.answerCallbackQuery(query.id, { text: '❌ Error updating task' });
       }
-      if (newStatus !== 'Resolved') {
-        buttons.push({ text: '✅ Resolved', callback_data: `ticket:${ticketId}:Resolved` });
-      }
-      if (newStatus !== 'Pending') {
-        buttons.push({ text: '⏸ Pending', callback_data: `ticket:${ticketId}:Pending` });
-      }
-
-      await bot.editMessageText(updatedMessage, {
-        chat_id: message.chat.id,
-        message_id: message.message_id,
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: buttons.length > 0 ? [buttons] : [] },
-      });
-
-      await bot.answerCallbackQuery(query.id, { text: `✅ Status changed to ${newStatus}` });
-    } catch (error) {
-      console.error('Error handling callback query:', error);
-      await bot.answerCallbackQuery(query.id, { text: '❌ Error updating ticket' });
+      return;
     }
   });
 };
 
-module.exports = { initBot, getBot, notifyTicketAssigned };
+module.exports = { initBot, getBot, notifyTicketAssigned, notifyTaskAssigned };
