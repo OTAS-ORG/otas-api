@@ -129,3 +129,94 @@ exports.verifyVaultPin = async (req, res) => {
     sendResponse(res, 500, false, error.message);
   }
 };
+
+exports.updateUserTelegramChatId = async (req, res) => {
+  try {
+    if (req.user.role !== 'Admin') {
+      return sendResponse(res, 403, false, 'Admin access required');
+    }
+
+    const { telegramChatId } = req.body;
+    const update = {};
+
+    if (telegramChatId && telegramChatId.trim()) {
+      update.telegramChatId = telegramChatId.trim();
+    } else {
+      update.telegramChatId = undefined;
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      update,
+      { new: true, runValidators: true }
+    ).select('-password -vaultPin').populate('departments', 'name');
+
+    if (!user) {
+      return sendResponse(res, 404, false, 'User not found');
+    }
+
+    sendResponse(res, 200, true, 'Telegram chat ID updated', user);
+  } catch (error) {
+    console.error('Error in updateUserTelegramChatId:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
+exports.updateUserRole = async (req, res) => {
+  try {
+    if (req.user.role !== 'Admin') {
+      return sendResponse(res, 403, false, 'Admin access required');
+    }
+
+    const { role } = req.body;
+    if (!role || !['Admin', 'User'].includes(role)) {
+      return sendResponse(res, 400, false, 'Role must be Admin or User');
+    }
+
+    if (req.params.id === req.user._id.toString() && role !== 'Admin') {
+      return sendResponse(res, 400, false, 'You cannot change your own role');
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { role },
+      { new: true, runValidators: true }
+    ).select('-password -vaultPin').populate('departments', 'name');
+
+    if (!user) {
+      return sendResponse(res, 404, false, 'User not found');
+    }
+
+    sendResponse(res, 200, true, 'User role updated', user);
+  } catch (error) {
+    console.error('Error in updateUserRole:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
+exports.createUser = async (req, res) => {
+  try {
+    if (req.user.role !== 'Admin') {
+      return sendResponse(res, 403, false, 'Admin access required');
+    }
+
+    const { username, password, role } = req.body;
+
+    if (!username || !password) {
+      return sendResponse(res, 400, false, 'Username and password are required');
+    }
+
+    const existing = await User.findOne({ username });
+    if (existing) {
+      return sendResponse(res, 400, false, 'Username already exists');
+    }
+
+    const user = await User.create({ username, password, role: role || 'User' });
+    const userData = await User.findById(user._id).select('-password -vaultPin');
+
+    sendResponse(res, 201, true, 'User created successfully', userData);
+  } catch (error) {
+    console.error('Error in createUser:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};

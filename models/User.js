@@ -6,12 +6,13 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: { 
     type: String, 
-    enum: ['Admin', 'Sales', 'DQA', 'PD', 'BD', 'Marketing', 'Design'], 
-    default: 'Admin' 
+    enum: ['Admin', 'User'], 
+    default: 'User' 
   },
   department_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
   departments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Department' }],
-  vaultPin: { type: String }
+  vaultPin: { type: String },
+  telegramChatId: { type: String, sparse: true, unique: true }
 }, { timestamps: true });
 
 userSchema.pre('save', async function() {

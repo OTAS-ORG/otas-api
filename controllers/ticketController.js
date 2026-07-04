@@ -3,6 +3,7 @@ const TicketComment = require('../models/TicketComment');
 const TicketHistory = require('../models/TicketHistory');
 const Department = require('../models/Department');
 const sendResponse = require('../utils/response');
+const { notifyTicketAssigned } = require('../services/telegramService');
 
 const createHistory = async (ticket_id, user_id, action_performed) => {
   await TicketHistory.create({ ticket_id, user_id, action_performed });
@@ -10,9 +11,6 @@ const createHistory = async (ticket_id, user_id, action_performed) => {
 
 exports.getTickets = async (req, res) => {
   try {
-    if (req.user.role === 'Sales') {
-      return sendResponse(res, 403, false, 'Access denied');
-    }
     const { search, status } = req.query;
     const filter = {};
 
@@ -78,9 +76,6 @@ exports.getTicketById = async (req, res) => {
 
 exports.createTicket = async (req, res) => {
   try {
-    if (req.user.role === 'Sales') {
-      return sendResponse(res, 403, false, 'Access denied');
-    }
     const { title, description, priority, department_id } = req.body;
 
     const ticket = await Ticket.create({
@@ -127,6 +122,11 @@ exports.assignTicket = async (req, res) => {
 
     if (changes.length > 0) {
       await createHistory(ticket._id, req.user._id, changes.join(' and '));
+    }
+
+    // Send Telegram notification when ticket is assigned
+    if (assigned_to !== undefined) {
+      await notifyTicketAssigned(ticket._id);
     }
 
     const populated = await Ticket.findById(ticket._id)
@@ -204,8 +204,8 @@ exports.getUsersByDepartment = async (req, res) => {
   try {
     const User = require('../models/User');
     const { department_id } = req.params;
-    const filter = department_id ? { department_id } : {};
-    const users = await User.find(filter).select('_id username role department_id');
+    const filter = department_id ? { departments: department_id } : {};
+    const users = await User.find(filter).select('_id username role departments');
     sendResponse(res, 200, true, 'Users fetched successfully', users);
   } catch (error) {
     console.error('Error in getUsersByDepartment:', error);

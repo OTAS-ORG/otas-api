@@ -18,6 +18,7 @@ const salaryRoutes = require('./routes/salaryRoutes');
 const User = require('./models/User');
 const Department = require('./models/Department');
 const seedFormConfigs = require('./seeders/formConfigSeeder');
+const { initBot } = require('./services/telegramService');
 
 const app = express();
 
@@ -75,22 +76,25 @@ const connectDB = async () => {
       console.log('Default departments created');
     }
 
-    // Auto-assign department to users based on role (if not already assigned)
-    const roleDeptMap = {
-      'Sales': 'Sales',
-      'BD': 'BD',
-      'PD': 'PD',
-      'DQA': 'DQA',
-      'Marketing': 'Marketing',
-      'Design': 'Design'
+    // Auto-assign departments to users based on username (if not already assigned)
+    const userDeptMap = {
+      'admin': ['IT'],
+      'TSO': ['BD', 'Finance'],
+      'HOW': ['Design'],
+      'HHA': ['Marketing'],
+      'WTDM': ['DQA'],
+      'Aung Aung Oo': ['BD'],
+      'yaemyintthu': ['Sales']
     };
-    for (const [role, deptName] of Object.entries(roleDeptMap)) {
-      const dept = await Department.findOne({ name: deptName });
-      if (dept) {
-        await User.updateMany(
-          { role, departments: { $ne: dept._id } },
-          { $addToSet: { departments: dept._id } }
-        );
+    for (const [username, deptNames] of Object.entries(userDeptMap)) {
+      for (const deptName of deptNames) {
+        const dept = await Department.findOne({ name: deptName });
+        if (dept) {
+          await User.updateMany(
+            { username, departments: { $ne: dept._id } },
+            { $addToSet: { departments: dept._id } }
+          );
+        }
       }
     }
 
@@ -105,6 +109,7 @@ const connectDB = async () => {
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 5000;
   connectDB().then(() => {
+    initBot();
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });

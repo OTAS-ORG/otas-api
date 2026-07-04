@@ -5,7 +5,10 @@ const { protect } = require('../middleware/authMiddleware');
 
 router.post('/login', authController.login);
 router.get('/users', protect, authController.getAllUsers);
+router.post('/users', protect, authController.createUser);
 router.put('/users/:id/departments', protect, authController.updateUserDepartments);
+router.put('/users/:id/role', protect, authController.updateUserRole);
+router.put('/users/:id/telegram', protect, authController.updateUserTelegramChatId);
 router.post('/set-vault-pin', protect, authController.setVaultPin);
 router.post('/verify-vault-pin', protect, authController.verifyVaultPin);
 
