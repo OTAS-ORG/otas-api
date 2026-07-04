@@ -7,8 +7,9 @@ const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 let bot = null;
 
 /**
- * Initialize the Telegram bot in polling mode.
- * Registers callback query handler for inline buttons.
+ * Initialize the Telegram bot in webhook mode (polling: false).
+ * Called once per cold start on Vercel, idempotent on warm starts.
+ * Registers callback query handler for inline ticket status buttons.
  */
 const initBot = () => {
   if (!TOKEN) {
@@ -16,12 +17,21 @@ const initBot = () => {
     return null;
   }
 
-  bot = new TelegramBot(TOKEN, { polling: true });
-  console.log('Telegram bot started (polling mode)');
+  // Prevent re-initialization on warm Vercel invocations
+  if (bot) return bot;
 
+  bot = new TelegramBot(TOKEN, { polling: false });
+  console.log('Telegram bot initialized (webhook mode)');
+
+  // Register callback handler at module level — persists across warm starts
   registerCallbackHandler();
   return bot;
 };
+
+/**
+ * Get the current bot instance (used by webhook route to call processUpdate).
+ */
+const getBot = () => bot;
 
 /**
  * Send ticket assignment notification to the assigned user's Telegram.
@@ -87,7 +97,8 @@ const notifyTicketAssigned = async (ticketId) => {
 
 /**
  * Handle inline button clicks from Telegram.
- * Format: "ticket:{ticketId}:{newStatus}"
+ * Callback data format: "ticket:{ticketId}:{newStatus}"
+ * In webhook mode, triggered via bot.processUpdate(req.body) in the webhook route.
  */
 const registerCallbackHandler = () => {
   if (!bot) return;
@@ -158,4 +169,4 @@ const registerCallbackHandler = () => {
   });
 };
 
-module.exports = { initBot, notifyTicketAssigned };
+module.exports = { initBot, getBot, notifyTicketAssigned };

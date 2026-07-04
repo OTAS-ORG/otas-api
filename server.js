@@ -18,7 +18,7 @@ const salaryRoutes = require('./routes/salaryRoutes');
 const User = require('./models/User');
 const Department = require('./models/Department');
 const seedFormConfigs = require('./seeders/formConfigSeeder');
-const { initBot } = require('./services/telegramService');
+const { initBot, getBot } = require('./services/telegramService');
 
 const app = express();
 
@@ -39,6 +39,16 @@ app.use('/api/expenses', expenseRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/salaries', salaryRoutes);
+
+// Telegram Bot Webhook endpoint
+// Telegram sends POST requests here with update payloads
+// bot.processUpdate() dispatches to registered handlers (callback_query, etc.)
+app.post('/api/telegram/webhook', (req, res) => {
+  const bot = getBot();
+  if (!bot) return res.sendStatus(200);
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
 
 // Database Connection & Seeder
 const connectDB = async () => {
