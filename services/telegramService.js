@@ -22,9 +22,7 @@ const initBot = () => {
   // Prevent re-initialization on warm Vercel invocations
   if (bot) return bot;
 
-  bot = new TelegramBot(TOKEN, {
-    polling: process.env.NODE_ENV !== 'production',
-  });
+  bot = new TelegramBot(TOKEN, { polling: false });
   console.log('Telegram bot initialized (webhook mode)');
 
   // Register callback handler at module level — persists across warm starts
