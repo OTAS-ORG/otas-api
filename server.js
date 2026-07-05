@@ -20,7 +20,7 @@ const taskRoutes = require('./routes/taskRoutes');
 const User = require('./models/User');
 const Department = require('./models/Department');
 const seedFormConfigs = require('./seeders/formConfigSeeder');
-const { initBot, getBot } = require('./services/telegramService');
+const { initBot, getBot, processTicketCallback, processTaskCallback } = require('./services/telegramService');
 
 const app = express();
 
@@ -46,11 +46,24 @@ app.use('/api/tasks', taskRoutes);
 
 // Telegram Bot Webhook endpoint
 // Telegram sends POST requests here with update payloads
-// bot.processUpdate() dispatches to registered handlers (callback_query, etc.)
-app.post('/api/telegram/webhook', (req, res) => {
+// Handler is awaited before response so Vercel won't kill the function mid-processing
+app.post('/api/telegram/webhook', async (req, res) => {
   const bot = getBot();
   if (!bot) return res.sendStatus(200);
-  bot.processUpdate(req.body);
+
+  try {
+    const { callback_query } = req.body;
+    if (callback_query?.data) {
+      if (callback_query.data.startsWith('ticket:')) {
+        await processTicketCallback(callback_query, bot);
+      } else if (callback_query.data.startsWith('task:')) {
+        await processTaskCallback(callback_query, bot);
+      }
+    }
+  } catch (error) {
+    console.error('Telegram webhook error:', error);
+  }
+
   res.sendStatus(200);
 });
 
