@@ -107,7 +107,7 @@ const notifyTicketAssigned = async (ticketId) => {
 };
 
 /**
- * Send task assignment notification to the assigned developer's Telegram.
+ * Send task assignment notification to both developer and QA via Telegram.
  */
 const notifyTaskAssigned = async (taskId) => {
   if (!bot) return;
@@ -117,48 +117,61 @@ const notifyTaskAssigned = async (taskId) => {
       .populate('assignedTo', 'username')
       .populate('qaAssignedTo', 'username');
 
-    if (!task || !task.assignedTo) {
-      console.log('Telegram notify: task or assigned user not found');
+    if (!task) {
+      console.log('Telegram notify: task not found');
       return;
     }
 
     const project = await Project.findById(task.projectId);
-    const assignedUser = await User.findById(task.assignedTo._id);
-    if (!assignedUser?.telegramChatId) {
-      console.log(`Telegram: No linked chat for ${task.assignedTo.username}.`);
-      return;
-    }
-
-    const chatId = assignedUser.telegramChatId;
-    const assignedName = task.assignedTo.username;
     const projectName = project?.name || 'Unknown';
     const statusLabels = { backlog: 'Backlog', todo: 'To Do', 'in-progress': 'In Progress', 'code-review': 'Code Review', 'qa-testing': 'QA Testing', done: 'Done' };
     const priorityLabels = { urgent: 'Urgent', high: 'High', normal: 'Normal', low: 'Low' };
 
-    const message = [
-      '🎫 *New Task Assigned*',
-      '',
-      `*Project:* ${projectName}`,
-      `*Task:* ${task.title}`,
-      `*Priority:* ${priorityLabels[task.priority] || task.priority}`,
-      `*Status:* ${statusLabels[task.status] || task.status}`,
-      `*Assigned to:* ${assignedName}`,
-      task.due_date ? `*Due:* ${new Date(task.due_date).toLocaleDateString()}` : null,
-    ].filter(Boolean).join('\n');
+    const devButtons = ['todo', 'in-progress', 'code-review', 'done'];
+    const qaButtons = ['qa-testing', 'backlog', 'done'];
 
-    const buttons = [];
-    const sdlcStatuses = ['todo', 'in-progress', 'code-review', 'qa-testing', 'done'];
-    for (const s of sdlcStatuses) {
-      if (task.status !== s) {
-        buttons.push({ text: `🟢 ${statusLabels[s]}`, callback_data: `task:${taskId}:${s}` });
+    const getButtonsForRole = (role, currentStatus) => {
+      const statuses = role === 'QA' ? qaButtons : devButtons;
+      const buttons = [];
+      for (const s of statuses) {
+        if (currentStatus !== s) {
+          buttons.push({ text: `🟢 ${statusLabels[s]}`, callback_data: `task:${taskId}:${s}` });
+        }
       }
-    }
+      return buttons;
+    };
 
-    await bot.sendMessage(chatId, message, {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: [buttons] },
-    });
-    console.log(`Telegram task notification sent to ${assignedName} for: ${task.title}`);
+    const sendToUser = async (user, role) => {
+      if (!user) return;
+      const userData = await User.findById(user._id);
+      if (!userData?.telegramChatId) {
+        console.log(`Telegram: No linked chat for ${user.username} (${role}).`);
+        return;
+      }
+
+      const roleButtons = getButtonsForRole(role, task.status);
+
+      const message = [
+        `🎫 *New Task Assigned (${role})*`,
+        '',
+        `*Project:* ${projectName}`,
+        `*Task:* ${task.title}`,
+        `*Priority:* ${priorityLabels[task.priority] || task.priority}`,
+        `*Status:* ${statusLabels[task.status] || task.status}`,
+        `*Assigned to:* ${task.assignedTo?.username || 'Unassigned'}`,
+        task.qaAssignedTo ? `*QA:* ${task.qaAssignedTo.username}` : null,
+        task.due_date ? `*Due:* ${new Date(task.due_date).toLocaleDateString()}` : null,
+      ].filter(Boolean).join('\n');
+
+      await bot.sendMessage(userData.telegramChatId, message, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [roleButtons] },
+      });
+      console.log(`Telegram task notification sent to ${user.username} (${role}) for: ${task.title}`);
+    };
+
+    await sendToUser(task.assignedTo, 'Developer');
+    await sendToUser(task.qaAssignedTo, 'QA');
   } catch (error) {
     console.error('Failed to send task Telegram notification:', error.message);
   }
@@ -276,9 +289,13 @@ const processTaskCallback = async (query, botInstance) => {
       task.due_date ? `*Due:* ${new Date(task.due_date).toLocaleDateString()}` : null,
     ].filter(Boolean).join('\n');
 
+    const devStatuses = ['todo', 'in-progress', 'code-review', 'done'];
+    const qaStatuses = ['qa-testing', 'backlog', 'done'];
+    const qaOwned = ['code-review', 'qa-testing'];
+    const nextRoleStatuses = qaOwned.includes(newStatus) ? qaStatuses : devStatuses;
+
     const buttons = [];
-    const sdlcStatuses = ['todo', 'in-progress', 'code-review', 'qa-testing', 'done'];
-    for (const s of sdlcStatuses) {
+    for (const s of nextRoleStatuses) {
       if (newStatus !== s) {
         buttons.push({ text: `🟢 ${statusLabels[s]}`, callback_data: `task:${taskId}:${s}` });
       }
