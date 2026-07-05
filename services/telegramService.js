@@ -224,6 +224,7 @@ const registerCallbackHandler = () => {
         });
 
         await bot.answerCallbackQuery(query.id, { text: `✅ Status changed to ${newStatus}` });
+        console.log(`Telegram: Ticket "${ticket.title}" (${ticketId}) status changed to ${newStatus} by @${query.from.username || query.from.first_name || 'unknown'}`);
       } catch (error) {
         console.error('Error handling ticket callback query:', error);
         await bot.answerCallbackQuery(query.id, { text: '❌ Error updating ticket' });
@@ -285,6 +286,7 @@ const registerCallbackHandler = () => {
         });
 
         await bot.answerCallbackQuery(query.id, { text: `✅ Status changed to ${statusLabels[newStatus] || newStatus}` });
+        console.log(`Telegram: Task "${task.title}" (${taskId}) status changed to ${newStatus} by @${query.from.username || query.from.first_name || 'unknown'}`);
       } catch (error) {
         console.error('Error handling task callback query:', error);
         await bot.answerCallbackQuery(query.id, { text: '❌ Error updating task' });
