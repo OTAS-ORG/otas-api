@@ -25,6 +25,17 @@ const initBot = () => {
   bot = new TelegramBot(TOKEN, { polling: false });
   console.log('Telegram bot initialized (webhook mode)');
 
+  // Auto-set webhook on Vercel — no browser step needed
+  if (process.env.NODE_ENV === 'production') {
+    const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL ||
+      (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}/api/telegram/webhook`);
+    if (webhookUrl) {
+      bot.setWebhook(webhookUrl).catch(err =>
+        console.error('Telegram setWebhook failed:', err.message)
+      );
+    }
+  }
+
   // Register callback handler at module level — persists across warm starts
   registerCallbackHandler();
   return bot;
