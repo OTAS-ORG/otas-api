@@ -3,13 +3,13 @@ const sendResponse = require('../utils/response');
 
 const submitContact = async (req, res) => {
   try {
-    const { name, officeName, serviceType, details } = req.body;
+    const { name, phone, serviceType, details } = req.body;
 
     if (!name || !serviceType || !details) {
       return res.status(400).json({ success: false, message: 'Name, service type, and details are required' });
     }
 
-    const contact = await Contact.create({ name, officeName, serviceType, details });
+    const contact = await Contact.create({ name, phone, serviceType, details });
     return sendResponse(res, 201, true, 'Contact form submitted successfully', contact);
   } catch (error) {
     return sendResponse(res, 500, false, error.message);
@@ -26,7 +26,7 @@ const getContacts = async (req, res) => {
     if (search) {
       filter.$or = [
         { name: { $regex: search, $options: 'i' } },
-        { officeName: { $regex: search, $options: 'i' } },
+        { phone: { $regex: search, $options: 'i' } },
         { details: { $regex: search, $options: 'i' } },
       ];
     }
