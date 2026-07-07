@@ -18,6 +18,7 @@ const salaryRoutes = require('./routes/salaryRoutes');
 const projectRoutes = require('./routes/projectRoutes');
 const taskRoutes = require('./routes/taskRoutes');
 const aiRoutes = require('./routes/aiRoutes');
+const contactRoutes = require('./routes/contactRoutes');
 const User = require('./models/User');
 const Department = require('./models/Department');
 const seedFormConfigs = require('./seeders/formConfigSeeder');
@@ -45,6 +46,7 @@ app.use('/api/salaries', salaryRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/contacts', contactRoutes);
 
 // Telegram Bot Webhook endpoint
 // Telegram sends POST requests here with update payloads
