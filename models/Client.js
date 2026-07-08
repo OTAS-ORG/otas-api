@@ -56,7 +56,7 @@ const clientSchema = new mongoose.Schema({
 
   // Purchased Services
   purchasedServices: [{
-    type: { type: String, enum: ['pos', 'ai_agent', 'erp', 'ecommerce', 'software'] },
+    type: { type: String },
     name: { type: String },
     status: { type: String, enum: ['pending', 'active', 'completed'], default: 'pending' }
   }],
