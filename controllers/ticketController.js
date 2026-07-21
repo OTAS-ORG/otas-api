@@ -200,6 +200,36 @@ exports.getDepartments = async (req, res) => {
   }
 };
 
+exports.deleteTicket = async (req, res) => {
+  try {
+    const ticket = await Ticket.findById(req.params.id);
+
+    if (!ticket) {
+      return sendResponse(res, 404, false, 'Ticket not found');
+    }
+
+    // Authorization: Only Admin or the ticket creator can delete
+    const isAdmin = req.user.role === 'Admin';
+    const isCreator = ticket.created_by.toString() === req.user._id.toString();
+
+    if (!isAdmin && !isCreator) {
+      return sendResponse(res, 403, false, 'Not authorized to delete this ticket');
+    }
+
+    // Delete associated comments and history
+    await Promise.all([
+      TicketComment.deleteMany({ ticket_id: ticket._id }),
+      TicketHistory.deleteMany({ ticket_id: ticket._id }),
+      Ticket.findByIdAndDelete(ticket._id),
+    ]);
+
+    sendResponse(res, 200, true, 'Ticket deleted successfully');
+  } catch (error) {
+    console.error('Error in deleteTicket:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
 exports.getUsersByDepartment = async (req, res) => {
   try {
     const User = require('../models/User');

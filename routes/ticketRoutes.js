@@ -14,5 +14,6 @@ router.get('/:id', ticketController.getTicketById);
 router.put('/:id/assign', ticketController.assignTicket);
 router.put('/:id/status', ticketController.updateStatus);
 router.post('/:id/comments', ticketController.addComment);
+router.delete('/:id', ticketController.deleteTicket);
 
 module.exports = router;

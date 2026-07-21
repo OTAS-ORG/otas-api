@@ -240,6 +240,28 @@ const processTicketCallback = async (query, botInstance) => {
 
     await botInstance.answerCallbackQuery(query.id, { text: `✅ Status changed to ${newStatus}` });
     console.log(`Telegram: Ticket "${ticket.title}" (${ticketId}) status changed to ${newStatus} by @${query.from.username || query.from.first_name || 'unknown'}`);
+
+    // 🔔 Notify ticket creator about the status change
+    if (ticket.created_by?._id) {
+      const clickerChatId = message.chat.id;
+      const creatorUser = await User.findById(ticket.created_by._id);
+      if (creatorUser?.telegramChatId && creatorUser.telegramChatId !== clickerChatId.toString()) {
+        const clickerName = query.from.username || query.from.first_name || 'Unknown';
+        const notifyMessage = [
+          '📬 *Ticket Status Updated*',
+          '',
+          `*Title:* ${ticket.title}`,
+          `*New Status:* ${newStatus} ✅`,
+          `*Updated by:* ${clickerName} (via Telegram)`,
+          `*Assigned to:* ${assignedName}`,
+        ].join('\n');
+
+        await botInstance.sendMessage(creatorUser.telegramChatId, notifyMessage, {
+          parse_mode: 'Markdown',
+        });
+        console.log(`Telegram: Notified ticket creator ${creatorUser.username} about status change to ${newStatus}`);
+      }
+    }
   } catch (error) {
     console.error('Error handling ticket callback query:', error);
     await botInstance.answerCallbackQuery(query.id, { text: '❌ Error updating ticket' });
