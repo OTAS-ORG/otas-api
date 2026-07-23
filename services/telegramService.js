@@ -96,9 +96,11 @@ const notifyTicketAssigned = async (ticketId) => {
       buttons.push({ text: '⏸ Pending', callback_data: `ticket:${ticketId}:Pending` });
     }
 
+    const replyButton = [{ text: '💬 Reply with Comment', callback_data: `ticket_comment_prompt:${ticketId}` }];
+
     await bot.sendMessage(chatId, message, {
       parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: [buttons] },
+      reply_markup: { inline_keyboard: [buttons, replyButton] },
     });
     console.log(`Telegram notification sent to ${assignedName} for ticket: ${ticket.title}`);
   } catch (error) {
@@ -231,11 +233,13 @@ const processTicketCallback = async (query, botInstance) => {
       buttons.push({ text: '⏸ Pending', callback_data: `ticket:${ticketId}:Pending` });
     }
 
+    const replyButton = [{ text: '💬 Reply with Comment', callback_data: `ticket_comment_prompt:${ticketId}` }];
+
     await botInstance.editMessageText(updatedMessage, {
       chat_id: message.chat.id,
       message_id: message.message_id,
       parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: buttons.length > 0 ? [buttons] : [] },
+      reply_markup: { inline_keyboard: buttons.length > 0 ? [buttons, replyButton] : [replyButton] },
     });
 
     await botInstance.answerCallbackQuery(query.id, { text: `✅ Status changed to ${newStatus}` });
@@ -338,4 +342,183 @@ const processTaskCallback = async (query, botInstance) => {
   }
 };
 
-module.exports = { initBot, getBot, notifyTicketAssigned, notifyTaskAssigned, processTicketCallback, processTaskCallback };
+/**
+ * Send ticket comment notification to relevant parties.
+ * If the commenter is the creator, notifies the assigned user.
+ * If the commenter is the assigned user, notifies the creator.
+ * If the commenter is a third party, notifies both (excluding the commenter themselves).
+ */
+const notifyTicketComment = async (commentId) => {
+  if (!bot) return;
+
+  try {
+    const TicketComment = require('../models/TicketComment');
+    const comment = await TicketComment.findById(commentId).populate('user_id', 'username');
+    if (!comment) {
+      console.log('Telegram notify: comment not found');
+      return;
+    }
+
+    const ticket = await Ticket.findById(comment.ticket_id)
+      .populate('assigned_to', 'username')
+      .populate('created_by', 'username');
+
+    if (!ticket) {
+      console.log('Telegram notify: ticket not found for comment');
+      return;
+    }
+
+    const commenterId = comment.user_id?._id.toString();
+    const creatorId = ticket.created_by?._id.toString();
+    const assignedId = ticket.assigned_to?._id.toString();
+    const commenterName = comment.user_id?.username || 'Unknown';
+
+    // Build the list of users to notify
+    const recipients = [];
+
+    if (commenterId === creatorId) {
+      // Creator commented, notify assignee
+      if (ticket.assigned_to) {
+        recipients.push(ticket.assigned_to);
+      }
+    } else if (commenterId === assignedId) {
+      // Assignee commented, notify creator
+      if (ticket.created_by) {
+        recipients.push(ticket.created_by);
+      }
+    } else {
+      // Third party (Admin/Other) commented, notify both creator and assignee
+      if (ticket.created_by && creatorId !== commenterId) {
+        recipients.push(ticket.created_by);
+      }
+      if (ticket.assigned_to && assignedId !== commenterId) {
+        recipients.push(ticket.assigned_to);
+      }
+    }
+
+    if (recipients.length === 0) return;
+
+    const message = [
+      `💬 *New Comment on Ticket: ${ticket.title}*`,
+      '',
+      `*From:* ${commenterName}`,
+      `*Comment:* ${comment.message}`,
+    ].join('\n');
+
+    const replyButton = [[{ text: '💬 Reply with Comment', callback_data: `ticket_comment_prompt:${ticket._id}` }]];
+
+    for (const recipient of recipients) {
+      const user = await User.findById(recipient._id);
+      if (user?.telegramChatId) {
+        await bot.sendMessage(user.telegramChatId, message, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: replyButton }
+        });
+        console.log(`Telegram notification sent to ${user.username} for comment on ticket: ${ticket.title}`);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to send Telegram comment notification:', error.message);
+  }
+};
+
+/**
+ * Send comment prompt with ForceReply.
+ */
+const processTicketCommentPromptCallback = async (query, botInstance) => {
+  const { data, message } = query;
+  if (!data) return;
+
+  const parts = data.split(':');
+  if (parts.length !== 2) return;
+
+  const ticketId = parts[1];
+  const chatId = message.chat.id;
+
+  try {
+    await botInstance.sendMessage(chatId, `💬 Reply to this message with your comment for Ticket #${ticketId}:`, {
+      reply_markup: {
+        force_reply: true,
+        selective: true
+      }
+    });
+    await botInstance.answerCallbackQuery(query.id);
+  } catch (error) {
+    console.error('Error sending comment prompt:', error);
+    await botInstance.answerCallbackQuery(query.id, { text: '❌ Error opening comment box' });
+  }
+};
+
+/**
+ * Parse replies to the comment prompt and save them in the DB.
+ */
+const processTelegramMessage = async (message, botInstance) => {
+  const { chat, text, reply_to_message } = message;
+  if (!text || !reply_to_message) return;
+
+  const promptPrefix = "💬 Reply to this message with your comment for Ticket #";
+  if (!reply_to_message.text || !reply_to_message.text.includes(promptPrefix)) return;
+
+  // Extract the Ticket ID
+  const match = reply_to_message.text.match(/Ticket #([a-f\d]{24})/i);
+  if (!match) return;
+
+  const ticketId = match[1];
+
+  try {
+    const Ticket = require('../models/Ticket');
+    const TicketComment = require('../models/TicketComment');
+    const TicketHistory = require('../models/TicketHistory');
+    const User = require('../models/User');
+
+    // Find user by telegramChatId
+    const user = await User.findOne({ telegramChatId: chat.id.toString() });
+    if (!user) {
+      await botInstance.sendMessage(chat.id, "❌ Error: Your Telegram account is not linked to any CRM user. Please link your account first.");
+      return;
+    }
+
+    const ticket = await Ticket.findById(ticketId);
+    if (!ticket) {
+      await botInstance.sendMessage(chat.id, "❌ Error: Ticket not found.");
+      return;
+    }
+
+    // Create comment
+    const comment = await TicketComment.create({
+      ticket_id: ticketId,
+      user_id: user._id,
+      message: text
+    });
+
+    // Create history
+    await TicketHistory.create({
+      ticket_id: ticketId,
+      user_id: user._id,
+      action_performed: 'Added comment via Telegram'
+    });
+
+    await botInstance.sendMessage(chat.id, `✅ Comment added successfully to ticket: *${ticket.title}*`, { parse_mode: 'Markdown' });
+
+    // Notify other participants
+    notifyTicketComment(comment._id).catch(err => {
+      console.error('Error triggering comment notifications from Telegram reply:', err);
+    });
+
+  } catch (error) {
+    console.error('Error processing Telegram reply comment:', error);
+    await botInstance.sendMessage(chat.id, "❌ Failed to add comment due to a server error.");
+  }
+};
+
+module.exports = {
+  initBot,
+  getBot,
+  notifyTicketAssigned,
+  notifyTaskAssigned,
+  notifyTicketComment,
+  processTicketCallback,
+  processTaskCallback,
+  processTicketCommentPromptCallback,
+  processTelegramMessage
+};

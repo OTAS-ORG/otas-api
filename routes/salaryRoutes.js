@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const salaryController = require('../controllers/salaryController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, financeOnly } = require('../middleware/authMiddleware');
 
 router.use(protect);
+router.use(financeOnly);
 
 router.get('/summary', salaryController.getSalarySummary);
 router.get('/', salaryController.getSalaries);

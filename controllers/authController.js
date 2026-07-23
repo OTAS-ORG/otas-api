@@ -13,13 +13,14 @@ exports.login = async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    const user = await User.findOne({ username });
+    const user = await User.findOne({ username }).populate('departments', 'name');
 
     if (user && (await user.matchPassword(password))) {
       const userData = {
         _id: user._id,
         username: user.username,
         role: user.role,
+        departments: user.departments ? user.departments.map(d => d.name) : [],
         token: generateToken(user._id),
       };
       sendResponse(res, 200, true, 'Login successful', userData);

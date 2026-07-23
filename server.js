@@ -31,6 +31,8 @@ const {
   getBot,
   processTicketCallback,
   processTaskCallback,
+  processTicketCommentPromptCallback,
+  processTelegramMessage,
 } = require("./services/telegramService");
 
 const app = express();
@@ -65,13 +67,18 @@ app.post("/api/telegram/webhook", async (req, res) => {
   if (!bot) return res.sendStatus(200);
 
   try {
-    const { callback_query } = req.body;
+    console.log("Telegram webhook payload:", JSON.stringify(req.body));
+    const { callback_query, message } = req.body;
     if (callback_query?.data) {
       if (callback_query.data.startsWith("ticket:")) {
         await processTicketCallback(callback_query, bot);
+      } else if (callback_query.data.startsWith("ticket_comment_prompt:")) {
+        await processTicketCommentPromptCallback(callback_query, bot);
       } else if (callback_query.data.startsWith("task:")) {
         await processTaskCallback(callback_query, bot);
       }
+    } else if (message) {
+      await processTelegramMessage(message, bot);
     }
   } catch (error) {
     console.error("Telegram webhook error:", error);
@@ -93,7 +100,7 @@ const connectDB = async () => {
     if (userCount === 0) {
       await User.create({
         username: "admin",
-        password: "password123",
+        password: "admin@987456",
         role: "Admin",
       });
       console.log("Default admin user created");
@@ -118,7 +125,6 @@ const connectDB = async () => {
 
     // Auto-assign departments to users based on username (if not already assigned)
     const userDeptMap = {
-      admin: ["IT"],
       TSO: ["BD", "Finance"],
       HOW: ["Design"],
       HHA: ["Marketing"],

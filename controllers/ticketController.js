@@ -3,7 +3,7 @@ const TicketComment = require('../models/TicketComment');
 const TicketHistory = require('../models/TicketHistory');
 const Department = require('../models/Department');
 const sendResponse = require('../utils/response');
-const { notifyTicketAssigned } = require('../services/telegramService');
+const { notifyTicketAssigned, notifyTicketComment } = require('../services/telegramService');
 
 const createHistory = async (ticket_id, user_id, action_performed) => {
   await TicketHistory.create({ ticket_id, user_id, action_performed });
@@ -14,12 +14,10 @@ exports.getTickets = async (req, res) => {
     const { search, status } = req.query;
     const filter = {};
 
-    if (req.user.role !== 'Admin') {
-      if (!req.user.departments || req.user.departments.length === 0) {
-        filter.created_by = req.user._id;
-      } else {
-        filter.department_id = { $in: req.user.departments };
-      }
+    if (req.user.departments && req.user.departments.length > 0) {
+      filter.department_id = { $in: req.user.departments };
+    } else if (req.user.role !== 'Admin') {
+      filter.created_by = req.user._id;
     }
 
     if (status) filter.status = status;
@@ -52,6 +50,20 @@ exports.getTicketById = async (req, res) => {
 
     if (!ticket) {
       return sendResponse(res, 404, false, 'Ticket not found');
+    }
+
+    // Access control check
+    const hasDeptRestrictions = req.user.departments && req.user.departments.length > 0;
+    if (hasDeptRestrictions) {
+      const ticketDeptId = ticket.department_id?._id || ticket.department_id;
+      const userDepts = req.user.departments.map(d => d.toString());
+      if (!ticketDeptId || !userDepts.includes(ticketDeptId.toString())) {
+        return sendResponse(res, 403, false, 'Not authorized to access this ticket');
+      }
+    } else if (req.user.role !== 'Admin') {
+      if (ticket.created_by?._id.toString() !== req.user._id.toString()) {
+        return sendResponse(res, 403, false, 'Not authorized to access this ticket');
+      }
     }
 
     const [comments, history] = await Promise.all([
@@ -179,6 +191,11 @@ exports.addComment = async (req, res) => {
     });
 
     await createHistory(ticket._id, req.user._id, 'Added comment');
+
+    // Trigger Telegram notification in background without blocking response
+    notifyTicketComment(comment._id).catch(err => {
+      console.error('Error sending Telegram notification for comment:', err);
+    });
 
     const populated = await TicketComment.findById(comment._id)
       .populate('user_id', 'username');
