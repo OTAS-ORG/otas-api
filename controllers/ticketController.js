@@ -14,9 +14,12 @@ exports.getTickets = async (req, res) => {
     const { search, status } = req.query;
     const filter = {};
 
-    if (req.user.departments && req.user.departments.length > 0) {
+    const totalDepts = await Department.countDocuments();
+    const isAllDepts = req.user.departments && req.user.departments.length >= totalDepts;
+
+    if (req.user.departments && req.user.departments.length > 0 && !isAllDepts) {
       filter.department_id = { $in: req.user.departments };
-    } else if (req.user.role !== 'Admin') {
+    } else if (req.user.role !== 'Admin' && !isAllDepts) {
       filter.created_by = req.user._id;
     }
 
@@ -53,14 +56,16 @@ exports.getTicketById = async (req, res) => {
     }
 
     // Access control check
-    const hasDeptRestrictions = req.user.departments && req.user.departments.length > 0;
+    const totalDepts = await Department.countDocuments();
+    const isAllDepts = req.user.departments && req.user.departments.length >= totalDepts;
+    const hasDeptRestrictions = req.user.departments && req.user.departments.length > 0 && !isAllDepts;
     if (hasDeptRestrictions) {
       const ticketDeptId = ticket.department_id?._id || ticket.department_id;
       const userDepts = req.user.departments.map(d => d.toString());
       if (!ticketDeptId || !userDepts.includes(ticketDeptId.toString())) {
         return sendResponse(res, 403, false, 'Not authorized to access this ticket');
       }
-    } else if (req.user.role !== 'Admin') {
+    } else if (req.user.role !== 'Admin' && !isAllDepts) {
       if (ticket.created_by?._id.toString() !== req.user._id.toString()) {
         return sendResponse(res, 403, false, 'Not authorized to access this ticket');
       }
@@ -225,8 +230,10 @@ exports.deleteTicket = async (req, res) => {
       return sendResponse(res, 404, false, 'Ticket not found');
     }
 
-    // Authorization: Only Admin or the ticket creator can delete
-    const isAdmin = req.user.role === 'Admin';
+    // Authorization: Only Admin, the ticket creator, or a user with all departments can delete
+    const totalDepts = await Department.countDocuments();
+    const isAllDepts = req.user.departments && req.user.departments.length >= totalDepts;
+    const isAdmin = req.user.role === 'Admin' || isAllDepts;
     const isCreator = ticket.created_by.toString() === req.user._id.toString();
 
     if (!isAdmin && !isCreator) {
