@@ -153,8 +153,8 @@ const connectDB = async () => {
   }
 };
 
-// For local development
-if (process.env.NODE_ENV !== "production") {
+// For local development or non-serverless environments (like Railway)
+if (require.main === module || process.env.NODE_ENV !== "production") {
   const PORT = process.env.PORT || 5000;
   connectDB().then(() => {
     initBot();
