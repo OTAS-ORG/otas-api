@@ -24,12 +24,14 @@ const taskRoutes = require("./routes/taskRoutes");
 const aiRoutes = require("./routes/aiRoutes");
 const contactRoutes = require("./routes/contactRoutes");
 const documentRoutes = require("./routes/documentRoutes");
+const eventRoutes = require("./routes/eventRoutes");
 const User = require("./models/User");
 const Department = require("./models/Department");
 const seedFormConfigs = require("./seeders/formConfigSeeder");
 const {
   initBot,
   getBot,
+  checkAndSendDueReminders,
   processTicketCallback,
   processTaskCallback,
   processTicketCommentPromptCallback,
@@ -60,6 +62,7 @@ app.use("/api/tasks", taskRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/contacts", contactRoutes);
 app.use("/api/documents", documentRoutes);
+app.use("/api/events", eventRoutes);
 
 // Telegram Bot Webhook endpoint
 // Telegram sends POST requests here with update payloads
@@ -153,11 +156,50 @@ const connectDB = async () => {
   }
 };
 
+const scheduleDaily9AM = (task) => {
+  const scheduleNext = () => {
+    const now = new Date();
+    const next9AM = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      9,
+      0,
+      0,
+      0
+    );
+    if (now >= next9AM) {
+      next9AM.setDate(next9AM.getDate() + 1);
+    }
+    const msUntil9AM = next9AM.getTime() - now.getTime();
+    console.log(
+      `Daily 9:00 AM ticket reminder scheduled. Next run at: ${next9AM.toLocaleString()}`
+    );
+
+    setTimeout(async () => {
+      try {
+        console.log("Running daily 9:00 AM ticket due date reminder check...");
+        await task();
+      } catch (err) {
+        console.error("Daily ticket reminder check failed:", err.message);
+      } finally {
+        scheduleNext();
+      }
+    }, msUntil9AM);
+  };
+
+  scheduleNext();
+};
+
 // For local development or non-serverless environments (like Railway)
 if (require.main === module || process.env.NODE_ENV !== "production") {
   const PORT = process.env.PORT || 5000;
   connectDB().then(() => {
     initBot();
+
+    // Schedule daily ticket due date reminder check at 9:00 AM
+    scheduleDaily9AM(checkAndSendDueReminders);
+
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });

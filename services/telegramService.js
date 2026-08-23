@@ -22,11 +22,13 @@ const initBot = () => {
   // Prevent re-initialization on warm Vercel invocations
   if (bot) return bot;
 
-  bot = new TelegramBot(TOKEN, { polling: false });
-  console.log('Telegram bot initialized (webhook mode)');
+  const isProduction = process.env.NODE_ENV === 'production';
 
-  // Auto-set webhook on Vercel — no browser step needed
-  if (process.env.NODE_ENV === 'production') {
+  if (isProduction) {
+    bot = new TelegramBot(TOKEN, { polling: false });
+    console.log('Telegram bot initialized (webhook mode)');
+
+    // Auto-set webhook on Vercel — no browser step needed
     const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL ||
       (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}/api/telegram/webhook`);
     if (webhookUrl) {
@@ -34,6 +36,34 @@ const initBot = () => {
         console.error('Telegram setWebhook failed:', err.message)
       );
     }
+  } else {
+    // In local development, use polling mode so it receives messages & inline buttons directly on localhost!
+    bot = new TelegramBot(TOKEN, { polling: true });
+    // Remove webhook if previously set so polling works cleanly
+    bot.deleteWebHook().catch(() => {});
+    console.log('Telegram bot initialized (polling mode for localhost testing)');
+
+    bot.on('callback_query', async (callbackQuery) => {
+      try {
+        if (callbackQuery?.data?.startsWith("ticket:")) {
+          await processTicketCallback(callbackQuery, bot);
+        } else if (callbackQuery?.data?.startsWith("ticket_comment_prompt:")) {
+          await processTicketCommentPromptCallback(callbackQuery, bot);
+        } else if (callbackQuery?.data?.startsWith("task:")) {
+          await processTaskCallback(callbackQuery, bot);
+        }
+      } catch (err) {
+        console.error("Local Telegram callback query error:", err);
+      }
+    });
+
+    bot.on('message', async (msg) => {
+      try {
+        await processTelegramMessage(msg, bot);
+      } catch (err) {
+        console.error("Local Telegram message error:", err);
+      }
+    });
   }
 
   return bot;
@@ -73,11 +103,16 @@ const notifyTicketAssigned = async (ticketId) => {
     const assignedName = ticket.assigned_to.username;
     const deptName = ticket.department_id?.name || 'No department';
 
+    const dueDateStr = ticket.dueDate
+      ? new Date(ticket.dueDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+      : 'Not set';
+
     const message = [
       '🎫 *New Ticket Assigned*',
       '',
       `*Title:* ${ticket.title}`,
       `*Description:* ${ticket.description}`,
+      `*Due Date:* ${dueDateStr}`,
       `*Priority:* ${ticket.priority}`,
       `*Status:* ${ticket.status}`,
       `*Assigned to:* ${assignedName}`,
@@ -105,6 +140,101 @@ const notifyTicketAssigned = async (ticketId) => {
     console.log(`Telegram notification sent to ${assignedName} for ticket: ${ticket.title}`);
   } catch (error) {
     console.error('Failed to send Telegram notification:', error.message);
+  }
+};
+
+/**
+ * Send ticket due date reminder notification via Telegram.
+ */
+const notifyTicketDueReminder = async (ticketId) => {
+  if (!bot) return;
+
+  try {
+    const ticket = await Ticket.findById(ticketId)
+      .populate('assigned_to', 'username')
+      .populate('department_id', 'name')
+      .populate('created_by', 'username');
+
+    if (!ticket || !ticket.assigned_to || ticket.status === 'Resolved') {
+      return;
+    }
+
+    const assignedUser = await User.findById(ticket.assigned_to._id);
+    if (!assignedUser?.telegramChatId) {
+      return;
+    }
+
+    const chatId = assignedUser.telegramChatId;
+    const assignedName = ticket.assigned_to.username;
+    const deptName = ticket.department_id?.name || 'No department';
+    const dueDateStr = ticket.dueDate
+      ? new Date(ticket.dueDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+      : 'Not set';
+
+    const now = new Date();
+    const isOverdue = ticket.dueDate && new Date(ticket.dueDate) < now;
+
+    const message = [
+      isOverdue ? '🚨 *[Overdue] Ticket Due Date Passed!*' : '⏰ *[Reminder] Ticket Due Date Approaching!*',
+      '',
+      `*Title:* ${ticket.title}`,
+      `*Due Date:* ${dueDateStr}${isOverdue ? ' ⚠️ (Overdue)' : ''}`,
+      `*Priority:* ${ticket.priority}`,
+      `*Status:* ${ticket.status}`,
+      `*Department:* ${deptName}`,
+      `*Assigned to:* ${assignedName}`,
+    ].join('\n');
+
+    const buttons = [];
+    if (ticket.status !== 'In Progress') {
+      buttons.push({ text: '🟡 In Progress', callback_data: `ticket:${ticketId}:In Progress` });
+    }
+    if (ticket.status !== 'Resolved') {
+      buttons.push({ text: '✅ Resolved', callback_data: `ticket:${ticketId}:Resolved` });
+    }
+    if (ticket.status !== 'Pending') {
+      buttons.push({ text: '⏸ Pending', callback_data: `ticket:${ticketId}:Pending` });
+    }
+
+    const replyButton = [{ text: '💬 Reply with Comment', callback_data: `ticket_comment_prompt:${ticketId}` }];
+
+    await bot.sendMessage(chatId, message, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [buttons, replyButton] },
+    });
+    console.log(`Telegram reminder sent to ${assignedName} for ticket: ${ticket.title}`);
+  } catch (error) {
+    console.error('Failed to send Telegram reminder:', error.message);
+  }
+};
+
+/**
+ * Scan all unresolved tickets with upcoming or passed due dates and dispatch reminders.
+ */
+const checkAndSendDueReminders = async () => {
+  try {
+    const now = new Date();
+    // 24 hours from now
+    const upcomingThreshold = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+    // Find unresolved tickets with dueDate <= upcomingThreshold and dueReminderSent is false
+    const tickets = await Ticket.find({
+      status: { $ne: 'Resolved' },
+      assigned_to: { $exists: true, $ne: null },
+      dueDate: { $exists: true, $ne: null, $lte: upcomingThreshold },
+      dueReminderSent: false
+    });
+
+    for (const ticket of tickets) {
+      await notifyTicketDueReminder(ticket._id);
+      ticket.dueReminderSent = true;
+      await ticket.save();
+    }
+
+    return tickets.length;
+  } catch (error) {
+    console.error('Error in checkAndSendDueReminders:', error);
+    return 0;
   }
 };
 
@@ -515,6 +645,8 @@ module.exports = {
   initBot,
   getBot,
   notifyTicketAssigned,
+  notifyTicketDueReminder,
+  checkAndSendDueReminders,
   notifyTaskAssigned,
   notifyTicketComment,
   processTicketCallback,

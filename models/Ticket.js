@@ -15,10 +15,13 @@ const ticketSchema = new mongoose.Schema({
   },
   department_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
   assigned_to: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  created_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
+  created_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  dueDate: { type: Date },
+  dueReminderSent: { type: Boolean, default: false }
 }, { timestamps: true });
 
 ticketSchema.index({ department_id: 1, status: 1 });
 ticketSchema.index({ created_by: 1 });
+ticketSchema.index({ dueDate: 1, status: 1, dueReminderSent: 1 });
 
 module.exports = mongoose.model('Ticket', ticketSchema);

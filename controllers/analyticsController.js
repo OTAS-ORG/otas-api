@@ -41,13 +41,52 @@ const expenseAmountMMK = [
 
 exports.getDashboard = async (req, res) => {
   try {
-    const { year } = req.query;
-    const targetYear = year ? parseInt(year) : new Date().getFullYear();
-    const startDate = new Date(targetYear, 0, 1);
-    const endDate = new Date(targetYear, 11, 31, 23, 59, 59, 999);
+    const { year, startDate: qStartDate, endDate: qEndDate } = req.query;
+
+    let startDate, endDate, targetYear;
+    let isCustomRange = false;
+
+    if (qStartDate && qEndDate) {
+      isCustomRange = true;
+      startDate = new Date(qStartDate);
+      startDate.setHours(0, 0, 0, 0);
+      endDate = new Date(qEndDate);
+      endDate.setHours(23, 59, 59, 999);
+      targetYear = startDate.getFullYear();
+    } else {
+      targetYear = year ? parseInt(year) : new Date().getFullYear();
+      startDate = new Date(targetYear, 0, 1);
+      endDate = new Date(targetYear, 11, 31, 23, 59, 59, 999);
+    }
+
     const prevYear = targetYear - 1;
-    const prevStart = new Date(prevYear, 0, 1);
-    const prevEnd = new Date(prevYear, 11, 31, 23, 59, 59, 999);
+    let prevStart, prevEnd;
+    if (isCustomRange) {
+      prevStart = new Date(startDate);
+      prevStart.setFullYear(prevStart.getFullYear() - 1);
+      prevEnd = new Date(endDate);
+      prevEnd.setFullYear(prevEnd.getFullYear() - 1);
+    } else {
+      prevStart = new Date(prevYear, 0, 1);
+      prevEnd = new Date(prevYear, 11, 31, 23, 59, 59, 999);
+    }
+
+    const startYear = startDate.getFullYear();
+    const startMonth = startDate.getMonth() + 1;
+    const endYear = endDate.getFullYear();
+    const endMonth = endDate.getMonth() + 1;
+
+    const salaryMatch = isCustomRange
+      ? startYear === endYear
+        ? { year: startYear, month: { $gte: startMonth, $lte: endMonth } }
+        : {
+            $or: [
+              { year: startYear, month: { $gte: startMonth } },
+              { year: { $gt: startYear, $lt: endYear } },
+              { year: endYear, month: { $lte: endMonth } },
+            ],
+          }
+      : { year: targetYear };
 
     const [
       revenueByMonth,
@@ -161,7 +200,7 @@ exports.getDashboard = async (req, res) => {
 
       // Salary summary (total payroll, allowances, deductions)
       Salary.aggregate([
-        { $match: { year: targetYear } },
+        { $match: salaryMatch },
         { $group: {
           _id: null,
           totalNetPay: { $sum: '$netPay' },
@@ -174,7 +213,7 @@ exports.getDashboard = async (req, res) => {
 
       // Salary by month
       Salary.aggregate([
-        { $match: { year: targetYear } },
+        { $match: salaryMatch },
         { $group: {
           _id: { month: '$month' },
           totalNetPay: { $sum: '$netPay' },
@@ -202,14 +241,14 @@ exports.getDashboard = async (req, res) => {
       // Total tickets
       Ticket.countDocuments(),
 
-      // Previous year grand revenue
+      // Previous year / previous period grand revenue
       Invoice.aggregate([
         { $match: { date: { $gte: prevStart, $lte: prevEnd } } },
         ...grandTotalAddFields,
         { $group: { _id: null, total: { $sum: '$amountMMK' } } },
       ]),
 
-      // Previous year grand expenses
+      // Previous year / previous period grand expenses
       Expense.aggregate([
         { $match: { date: { $gte: prevStart, $lte: prevEnd } } },
         ...expenseAmountMMK,
@@ -224,6 +263,9 @@ exports.getDashboard = async (req, res) => {
 
     sendResponse(res, 200, true, 'Dashboard analytics retrieved successfully', {
       year: targetYear,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      isCustomRange,
       totalRevenueMMK: totalRevenue,
       totalExpenseMMK: totalExpense,
       prevYearRevenueMMK: prevRevenue,

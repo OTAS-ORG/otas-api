@@ -3,6 +3,10 @@ const router = express.Router();
 const ticketController = require('../controllers/ticketController');
 const { protect } = require('../middleware/authMiddleware');
 
+// Cron endpoint (accessible by Vercel Cron or Serverless runner without user JWT)
+router.get('/check-reminders', ticketController.triggerDueReminders);
+router.post('/check-reminders', ticketController.triggerDueReminders);
+
 router.use(protect);
 
 router.get('/departments', ticketController.getDepartments);

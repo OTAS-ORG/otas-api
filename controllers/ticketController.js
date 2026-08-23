@@ -3,7 +3,7 @@ const TicketComment = require('../models/TicketComment');
 const TicketHistory = require('../models/TicketHistory');
 const Department = require('../models/Department');
 const sendResponse = require('../utils/response');
-const { notifyTicketAssigned, notifyTicketComment } = require('../services/telegramService');
+const { notifyTicketAssigned, notifyTicketComment, checkAndSendDueReminders } = require('../services/telegramService');
 
 const createHistory = async (ticket_id, user_id, action_performed) => {
   await TicketHistory.create({ ticket_id, user_id, action_performed });
@@ -16,19 +16,35 @@ exports.getTickets = async (req, res) => {
 
     const totalDepts = await Department.countDocuments();
     const isAllDepts = req.user.departments && req.user.departments.length >= totalDepts;
+    const isAdmin = req.user.role === 'Admin' || isAllDepts;
 
-    if (req.user.departments && req.user.departments.length > 0 && !isAllDepts) {
-      filter.department_id = { $in: req.user.departments };
-    } else if (req.user.role !== 'Admin' && !isAllDepts) {
-      filter.created_by = req.user._id;
+    if (!isAdmin) {
+      const userDepts = req.user.departments || [];
+      const accessConditions = [
+        { created_by: req.user._id },
+        { assigned_to: req.user._id }
+      ];
+      if (userDepts.length > 0) {
+        accessConditions.push({ department_id: { $in: userDepts } });
+      }
+      filter.$or = accessConditions;
     }
 
     if (status) filter.status = status;
     if (search) {
-      filter.$or = [
+      const searchConditions = [
         { title: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } }
       ];
+      if (filter.$or) {
+        filter.$and = [
+          { $or: filter.$or },
+          { $or: searchConditions }
+        ];
+        delete filter.$or;
+      } else {
+        filter.$or = searchConditions;
+      }
     }
 
     const tickets = await Ticket.find(filter)
@@ -55,18 +71,19 @@ exports.getTicketById = async (req, res) => {
       return sendResponse(res, 404, false, 'Ticket not found');
     }
 
-    // Access control check
+    // Access control check: Admin, creator, assignee, or user within the ticket's department
     const totalDepts = await Department.countDocuments();
     const isAllDepts = req.user.departments && req.user.departments.length >= totalDepts;
-    const hasDeptRestrictions = req.user.departments && req.user.departments.length > 0 && !isAllDepts;
-    if (hasDeptRestrictions) {
-      const ticketDeptId = ticket.department_id?._id || ticket.department_id;
-      const userDepts = req.user.departments.map(d => d.toString());
-      if (!ticketDeptId || !userDepts.includes(ticketDeptId.toString())) {
-        return sendResponse(res, 403, false, 'Not authorized to access this ticket');
-      }
-    } else if (req.user.role !== 'Admin' && !isAllDepts) {
-      if (ticket.created_by?._id.toString() !== req.user._id.toString()) {
+    const isAdmin = req.user.role === 'Admin' || isAllDepts;
+
+    if (!isAdmin) {
+      const ticketDeptId = (ticket.department_id?._id || ticket.department_id)?.toString();
+      const userDepts = (req.user.departments || []).map(d => d.toString());
+      const isCreator = (ticket.created_by?._id || ticket.created_by)?.toString() === req.user._id.toString();
+      const isAssignee = (ticket.assigned_to?._id || ticket.assigned_to)?.toString() === req.user._id.toString();
+      const isInDept = ticketDeptId && userDepts.includes(ticketDeptId);
+
+      if (!isCreator && !isAssignee && !isInDept) {
         return sendResponse(res, 403, false, 'Not authorized to access this ticket');
       }
     }
@@ -93,13 +110,14 @@ exports.getTicketById = async (req, res) => {
 
 exports.createTicket = async (req, res) => {
   try {
-    const { title, description, priority, department_id } = req.body;
+    const { title, description, priority, department_id, dueDate } = req.body;
 
     const ticket = await Ticket.create({
       title,
       description,
       priority: priority || 'Medium',
-      department_id,
+      department_id: department_id || undefined,
+      dueDate: dueDate ? new Date(dueDate) : undefined,
       created_by: req.user._id
     });
 
@@ -118,7 +136,7 @@ exports.createTicket = async (req, res) => {
 
 exports.assignTicket = async (req, res) => {
   try {
-    const { assigned_to, department_id } = req.body;
+    const { assigned_to, department_id, dueDate } = req.body;
     const ticket = await Ticket.findById(req.params.id);
 
     if (!ticket) {
@@ -127,12 +145,21 @@ exports.assignTicket = async (req, res) => {
 
     const changes = [];
     if (assigned_to !== undefined) {
-      ticket.assigned_to = assigned_to;
+      ticket.assigned_to = assigned_to || null;
       changes.push('assigned user');
     }
     if (department_id !== undefined) {
-      ticket.department_id = department_id;
+      ticket.department_id = department_id || null;
       changes.push('changed department');
+    }
+    if (dueDate !== undefined) {
+      const oldDue = ticket.dueDate ? new Date(ticket.dueDate).toISOString().split('T')[0] : 'None';
+      const newDue = dueDate ? new Date(dueDate).toISOString().split('T')[0] : 'None';
+      if (oldDue !== newDue) {
+        ticket.dueDate = dueDate ? new Date(dueDate) : null;
+        ticket.dueReminderSent = false;
+        changes.push(`set due date to ${newDue}`);
+      }
     }
 
     await ticket.save();
@@ -142,7 +169,7 @@ exports.assignTicket = async (req, res) => {
     }
 
     // Send Telegram notification when ticket is assigned
-    if (assigned_to !== undefined) {
+    if (assigned_to !== undefined && assigned_to) {
       await notifyTicketAssigned(ticket._id);
     }
 
@@ -182,7 +209,7 @@ exports.updateStatus = async (req, res) => {
 
 exports.addComment = async (req, res) => {
   try {
-    const { message } = req.body;
+    const { message, is_internal } = req.body;
 
     const ticket = await Ticket.findById(req.params.id);
     if (!ticket) {
@@ -192,15 +219,22 @@ exports.addComment = async (req, res) => {
     const comment = await TicketComment.create({
       ticket_id: ticket._id,
       user_id: req.user._id,
-      message
+      message,
+      is_internal: Boolean(is_internal)
     });
 
-    await createHistory(ticket._id, req.user._id, 'Added comment');
+    await createHistory(
+      ticket._id,
+      req.user._id,
+      is_internal ? 'Added internal note' : 'Added comment'
+    );
 
-    // Trigger Telegram notification in background without blocking response
-    notifyTicketComment(comment._id).catch(err => {
-      console.error('Error sending Telegram notification for comment:', err);
-    });
+    // Only trigger Telegram bot notification for public comments (NOT for internal notes)
+    if (!is_internal) {
+      notifyTicketComment(comment._id).catch(err => {
+        console.error('Error sending Telegram notification for comment:', err);
+      });
+    }
 
     const populated = await TicketComment.findById(comment._id)
       .populate('user_id', 'username');
@@ -266,3 +300,14 @@ exports.getUsersByDepartment = async (req, res) => {
     sendResponse(res, 500, false, error.message);
   }
 };
+
+exports.triggerDueReminders = async (req, res) => {
+  try {
+    const count = await checkAndSendDueReminders();
+    sendResponse(res, 200, true, `Processed due date reminders. Sent ${count} notification(s).`, { count });
+  } catch (error) {
+    console.error('Error in triggerDueReminders:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
