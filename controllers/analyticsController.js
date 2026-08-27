@@ -109,6 +109,7 @@ exports.getDashboard = async (req, res) => {
       totalTickets,
       prevGrandRevenue,
       prevGrandExpenses,
+      grandPendingInvoices,
     ] = await Promise.all([
       // Revenue by month
       Invoice.aggregate([
@@ -254,12 +255,27 @@ exports.getDashboard = async (req, res) => {
         ...expenseAmountMMK,
         { $group: { _id: null, total: { $sum: '$amountMMK' } } },
       ]),
+
+      // Total pending invoice amount (Pending payment status and not cancelled)
+      Invoice.aggregate([
+        {
+          $match: {
+            date: { $gte: startDate, $lte: endDate },
+            paymentStatus: 'Pending',
+            status: { $ne: 'Cancelled' },
+          },
+        },
+        ...grandTotalAddFields,
+        { $group: { _id: null, total: { $sum: '$amountMMK' }, count: { $sum: 1 } } },
+      ]),
     ]);
 
     const totalRevenue = grandRevenue[0]?.total || 0;
     const totalExpense = grandExpenses[0]?.total || 0;
     const prevRevenue = prevGrandRevenue[0]?.total || 0;
     const prevExpense = prevGrandExpenses[0]?.total || 0;
+    const totalPendingInvoice = grandPendingInvoices[0]?.total || 0;
+    const pendingInvoiceCount = grandPendingInvoices[0]?.count || 0;
 
     sendResponse(res, 200, true, 'Dashboard analytics retrieved successfully', {
       year: targetYear,
@@ -268,6 +284,8 @@ exports.getDashboard = async (req, res) => {
       isCustomRange,
       totalRevenueMMK: totalRevenue,
       totalExpenseMMK: totalExpense,
+      totalPendingInvoiceMMK: totalPendingInvoice,
+      pendingInvoiceCount: pendingInvoiceCount,
       prevYearRevenueMMK: prevRevenue,
       prevYearExpenseMMK: prevExpense,
       revenue: {
@@ -282,6 +300,8 @@ exports.getDashboard = async (req, res) => {
       invoices: {
         statusCounts: invoiceStatusCounts,
         paymentStatusCounts: paymentStatusCounts,
+        totalPendingAmountMMK: totalPendingInvoice,
+        pendingCount: pendingInvoiceCount,
       },
       clients: {
         total: totalClients,
