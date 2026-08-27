@@ -3,6 +3,7 @@ if (process.env.NODE_ENV !== "production") {
   dns.setServers(["1.1.1.1", "8.8.8.8"]);
 }
 const express = require("express");
+const path = require("path");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const morgan = require("morgan");
@@ -25,6 +26,7 @@ const aiRoutes = require("./routes/aiRoutes");
 const contactRoutes = require("./routes/contactRoutes");
 const documentRoutes = require("./routes/documentRoutes");
 const eventRoutes = require("./routes/eventRoutes");
+const blogRoutes = require("./routes/blogRoutes");
 const User = require("./models/User");
 const Department = require("./models/Department");
 const seedFormConfigs = require("./seeders/formConfigSeeder");
@@ -44,6 +46,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(morgan("dev"));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Routes
 app.use("/api/clients", clientRoutes);
@@ -63,6 +66,7 @@ app.use("/api/ai", aiRoutes);
 app.use("/api/contacts", contactRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/events", eventRoutes);
+app.use("/api/blogs", blogRoutes);
 
 // Telegram Bot Webhook endpoint
 // Telegram sends POST requests here with update payloads
