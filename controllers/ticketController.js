@@ -3,6 +3,7 @@ const TicketComment = require('../models/TicketComment');
 const TicketHistory = require('../models/TicketHistory');
 const Department = require('../models/Department');
 const sendResponse = require('../utils/response');
+const { uploadToR2 } = require('../utils/r2Storage');
 const { notifyTicketAssigned, notifyTicketComment, checkAndSendDueReminders } = require('../services/telegramService');
 
 const createHistory = async (ticket_id, user_id, action_performed) => {
@@ -91,6 +92,7 @@ exports.getTicketById = async (req, res) => {
     const [comments, history] = await Promise.all([
       TicketComment.find({ ticket_id: ticket._id })
         .populate('user_id', 'username')
+        .populate('reactions.users', 'username')
         .sort({ createdAt: 1 }),
       TicketHistory.find({ ticket_id: ticket._id })
         .populate('user_id', 'username')
@@ -207,19 +209,41 @@ exports.updateStatus = async (req, res) => {
   }
 };
 
+exports.uploadTicketAttachment = async (req, res) => {
+  try {
+    if (!req.file) {
+      return sendResponse(res, 400, false, 'No file uploaded');
+    }
+    const url = await uploadToR2(req.file);
+    sendResponse(res, 200, true, 'File uploaded successfully', { url });
+  } catch (error) {
+    console.error('Error in uploadTicketAttachment:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
 exports.addComment = async (req, res) => {
   try {
-    const { message, is_internal } = req.body;
+    const { message, images, is_internal } = req.body;
 
     const ticket = await Ticket.findById(req.params.id);
     if (!ticket) {
       return sendResponse(res, 404, false, 'Ticket not found');
     }
 
+    const imageList = Array.isArray(images) ? images.filter(Boolean) : [];
+    const textMessage = typeof message === 'string' ? message.trim() : '';
+
+    if (!textMessage && imageList.length === 0) {
+      return sendResponse(res, 400, false, 'Comment must contain a message or at least one image');
+    }
+
     const comment = await TicketComment.create({
       ticket_id: ticket._id,
       user_id: req.user._id,
-      message,
+      message: textMessage,
+      images: imageList,
+      reactions: [],
       is_internal: Boolean(is_internal)
     });
 
@@ -237,11 +261,69 @@ exports.addComment = async (req, res) => {
     }
 
     const populated = await TicketComment.findById(comment._id)
-      .populate('user_id', 'username');
+      .populate('user_id', 'username')
+      .populate('reactions.users', 'username');
 
     sendResponse(res, 201, true, 'Comment added successfully', populated);
   } catch (error) {
     console.error('Error in addComment:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
+exports.toggleCommentReaction = async (req, res) => {
+  try {
+    const { id: ticketId, commentId } = req.params;
+    const { emoji } = req.body;
+
+    if (!emoji || typeof emoji !== 'string') {
+      return sendResponse(res, 400, false, 'Emoji is required');
+    }
+
+    const comment = await TicketComment.findOne({ _id: commentId, ticket_id: ticketId });
+    if (!comment) {
+      return sendResponse(res, 404, false, 'Comment not found');
+    }
+
+    if (!comment.reactions) {
+      comment.reactions = [];
+    }
+
+    const userIdStr = req.user._id.toString();
+    const existingReactionIndex = comment.reactions.findIndex((r) => r.emoji === emoji);
+
+    if (existingReactionIndex > -1) {
+      const userIndex = comment.reactions[existingReactionIndex].users.findIndex(
+        (u) => (u._id || u).toString() === userIdStr
+      );
+
+      if (userIndex > -1) {
+        // User already reacted with this emoji -> remove user reaction (toggle off)
+        comment.reactions[existingReactionIndex].users.splice(userIndex, 1);
+        if (comment.reactions[existingReactionIndex].users.length === 0) {
+          comment.reactions.splice(existingReactionIndex, 1);
+        }
+      } else {
+        // User has not reacted with this emoji yet -> add user reaction
+        comment.reactions[existingReactionIndex].users.push(req.user._id);
+      }
+    } else {
+      // New emoji reaction for this comment
+      comment.reactions.push({
+        emoji,
+        users: [req.user._id],
+      });
+    }
+
+    await comment.save();
+
+    const populated = await TicketComment.findById(comment._id)
+      .populate('user_id', 'username')
+      .populate('reactions.users', 'username');
+
+    sendResponse(res, 200, true, 'Reaction updated successfully', populated);
+  } catch (error) {
+    console.error('Error in toggleCommentReaction:', error);
     sendResponse(res, 500, false, error.message);
   }
 };

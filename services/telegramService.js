@@ -528,11 +528,16 @@ const notifyTicketComment = async (commentId) => {
 
     if (recipients.length === 0) return;
 
+    const commentBody = [
+      comment.message || '',
+      comment.images && comment.images.length > 0 ? `📷 [${comment.images.length} Image(s) Attached]` : '',
+    ].filter(Boolean).join('\n');
+
     const message = [
       `💬 *New Comment on Ticket: ${ticket.title}*`,
       '',
       `*From:* ${commenterName}`,
-      `*Comment:* ${comment.message}`,
+      `*Comment:* ${commentBody}`,
     ].join('\n');
 
     const replyButton = [[{ text: '💬 Reply with Comment', callback_data: `ticket_comment_prompt:${ticket._id}` }]];

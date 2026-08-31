@@ -14,11 +14,27 @@ const taskSchema = new mongoose.Schema({
     default: 'normal'
   },
   due_date: { type: Date },
-  estimatedHours: { type: Number, min: 0 },
-  actualHours: { type: Number, min: 0 },
+  startDate: { type: Date },
+  estimatedHours: { type: Number, min: 0, default: 0 },
+  actualHours: { type: Number, min: 0, default: 0 },
   assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   qaAssignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   projectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', required: true },
+  checklist: [
+    {
+      title: { type: String, required: true },
+      completed: { type: Boolean, default: false },
+    },
+  ],
+  attachments: [
+    {
+      name: { type: String, required: true },
+      url: { type: String, required: true },
+      size: { type: Number },
+      uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      createdAt: { type: Date, default: Date.now },
+    },
+  ],
 }, { timestamps: true });
 
 taskSchema.index({ projectId: 1, status: 1 });

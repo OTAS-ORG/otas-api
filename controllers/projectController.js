@@ -2,6 +2,7 @@ const Project = require('../models/Project');
 const Task = require('../models/Task');
 const TaskComment = require('../models/TaskComment');
 const sendResponse = require('../utils/response');
+const { uploadToR2 } = require('../utils/r2Storage');
 const { notifyTaskAssigned } = require('../services/telegramService');
 
 const generateProjectKey = (name) => {
@@ -149,7 +150,20 @@ exports.updateTaskStatus = async (req, res) => {
 
 exports.updateTask = async (req, res) => {
   try {
-    const allowedFields = ['title', 'description', 'priority', 'due_date', 'estimatedHours', 'actualHours', 'assignedTo', 'qaAssignedTo'];
+    const allowedFields = [
+      'title',
+      'description',
+      'status',
+      'priority',
+      'due_date',
+      'startDate',
+      'estimatedHours',
+      'actualHours',
+      'assignedTo',
+      'qaAssignedTo',
+      'checklist',
+      'attachments',
+    ];
     const updates = {};
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) {
@@ -171,8 +185,10 @@ exports.updateTask = async (req, res) => {
       { $set: updates },
       { new: true, runValidators: true }
     )
+      .populate('projectId', 'name projectKey')
       .populate('assignedTo', 'username')
-      .populate('qaAssignedTo', 'username');
+      .populate('qaAssignedTo', 'username')
+      .populate('attachments.uploadedBy', 'username');
 
     if (!task) {
       return sendResponse(res, 404, false, 'Task not found');
@@ -196,6 +212,7 @@ exports.deleteTask = async (req, res) => {
     if (!task) {
       return sendResponse(res, 404, false, 'Task not found');
     }
+    await TaskComment.deleteMany({ task_id: req.params.taskId });
     sendResponse(res, 200, true, 'Task deleted successfully');
   } catch (error) {
     console.error('Error in deleteTask:', error);
@@ -206,8 +223,10 @@ exports.deleteTask = async (req, res) => {
 exports.getTask = async (req, res) => {
   try {
     const task = await Task.findById(req.params.taskId)
+      .populate('projectId', 'name projectKey')
       .populate('assignedTo', 'username')
-      .populate('qaAssignedTo', 'username');
+      .populate('qaAssignedTo', 'username')
+      .populate('attachments.uploadedBy', 'username');
     if (!task) {
       return sendResponse(res, 404, false, 'Task not found');
     }
@@ -218,10 +237,28 @@ exports.getTask = async (req, res) => {
   }
 };
 
+exports.uploadTaskAttachment = async (req, res) => {
+  try {
+    if (!req.file) {
+      return sendResponse(res, 400, false, 'No file uploaded');
+    }
+    const url = await uploadToR2(req.file);
+    sendResponse(res, 200, true, 'Attachment uploaded successfully', {
+      name: req.file.originalname,
+      url,
+      size: req.file.size,
+    });
+  } catch (error) {
+    console.error('Error in uploadTaskAttachment:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
 exports.getComments = async (req, res) => {
   try {
     const comments = await TaskComment.find({ task_id: req.params.taskId })
       .populate('user_id', 'username')
+      .populate('reactions.users', 'username')
       .sort({ createdAt: 1 });
     sendResponse(res, 200, true, 'Comments fetched successfully', comments);
   } catch (error) {
@@ -232,23 +269,85 @@ exports.getComments = async (req, res) => {
 
 exports.addComment = async (req, res) => {
   try {
-    const { message } = req.body;
-    if (!message || !message.trim()) {
-      return sendResponse(res, 400, false, 'Message is required');
+    const { message, images } = req.body;
+    const textMessage = typeof message === 'string' ? message.trim() : '';
+    const imageList = Array.isArray(images) ? images.filter(Boolean) : [];
+
+    if (!textMessage && imageList.length === 0) {
+      return sendResponse(res, 400, false, 'Comment must contain a message or at least one image');
     }
 
     const comment = await TaskComment.create({
       task_id: req.params.taskId,
       user_id: req.user._id,
-      message,
+      message: textMessage,
+      images: imageList,
+      reactions: [],
     });
 
     const populated = await TaskComment.findById(comment._id)
-      .populate('user_id', 'username');
+      .populate('user_id', 'username')
+      .populate('reactions.users', 'username');
 
     sendResponse(res, 201, true, 'Comment added successfully', populated);
   } catch (error) {
     console.error('Error in addComment:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
+exports.toggleTaskCommentReaction = async (req, res) => {
+  try {
+    const { taskId, commentId } = req.params;
+    const { emoji } = req.body;
+
+    if (!emoji || typeof emoji !== 'string') {
+      return sendResponse(res, 400, false, 'Emoji is required');
+    }
+
+    const comment = await TaskComment.findOne({ _id: commentId, task_id: taskId });
+    if (!comment) {
+      return sendResponse(res, 404, false, 'Comment not found');
+    }
+
+    if (!comment.reactions) {
+      comment.reactions = [];
+    }
+
+    const userIdStr = req.user._id.toString();
+    const existingReactionIndex = comment.reactions.findIndex((r) => r.emoji === emoji);
+
+    if (existingReactionIndex > -1) {
+      const userIndex = comment.reactions[existingReactionIndex].users.findIndex(
+        (u) => (u._id || u).toString() === userIdStr
+      );
+
+      if (userIndex > -1) {
+        // Toggle off
+        comment.reactions[existingReactionIndex].users.splice(userIndex, 1);
+        if (comment.reactions[existingReactionIndex].users.length === 0) {
+          comment.reactions.splice(existingReactionIndex, 1);
+        }
+      } else {
+        // Add user reaction
+        comment.reactions[existingReactionIndex].users.push(req.user._id);
+      }
+    } else {
+      comment.reactions.push({
+        emoji,
+        users: [req.user._id],
+      });
+    }
+
+    await comment.save();
+
+    const populated = await TaskComment.findById(comment._id)
+      .populate('user_id', 'username')
+      .populate('reactions.users', 'username');
+
+    sendResponse(res, 200, true, 'Reaction updated successfully', populated);
+  } catch (error) {
+    console.error('Error in toggleTaskCommentReaction:', error);
     sendResponse(res, 500, false, error.message);
   }
 };
