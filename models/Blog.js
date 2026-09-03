@@ -29,6 +29,11 @@ const blogSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    coverImagePosition: {
+      type: String,
+      default: '50% 50%',
+      trim: true,
+    },
     category: {
       type: String,
       default: 'General',

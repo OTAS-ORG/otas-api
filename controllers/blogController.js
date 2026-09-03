@@ -139,7 +139,7 @@ exports.getBlogById = async (req, res) => {
 // Create new blog post
 exports.createBlog = async (req, res) => {
   try {
-    const { title, content, excerpt, coverImage, category, tags, status, customSlug } = req.body;
+    const { title, content, excerpt, coverImage, coverImagePosition, category, tags, status, customSlug } = req.body;
 
     if (!title || !content) {
       return sendResponse(res, 400, false, 'Title and content are required');
@@ -161,6 +161,7 @@ exports.createBlog = async (req, res) => {
       content,
       excerpt: excerpt || title,
       coverImage: coverImage || '',
+      coverImagePosition: coverImagePosition || '50% 50%',
       category: category || 'General',
       tags: parsedTags,
       status: status || 'Draft',
@@ -190,7 +191,7 @@ exports.createBlog = async (req, res) => {
 // Update blog post
 exports.updateBlog = async (req, res) => {
   try {
-    const { title, content, excerpt, coverImage, category, tags, status, customSlug } = req.body;
+    const { title, content, excerpt, coverImage, coverImagePosition, category, tags, status, customSlug } = req.body;
 
     const blog = await Blog.findById(req.params.id);
     if (!blog) {
@@ -211,6 +212,7 @@ exports.updateBlog = async (req, res) => {
     if (content !== undefined) blog.content = content;
     if (excerpt !== undefined) blog.excerpt = excerpt;
     if (coverImage !== undefined) blog.coverImage = coverImage;
+    if (coverImagePosition !== undefined) blog.coverImagePosition = coverImagePosition;
     if (category !== undefined) blog.category = category;
 
     if (tags !== undefined) {
@@ -339,7 +341,7 @@ exports.getPublicBlogs = async (req, res) => {
 
     const [blogs, total] = await Promise.all([
       Blog.find(filter)
-        .select('title slug excerpt coverImage category tags readTime views publishedAt authorName createdAt')
+        .select('title slug excerpt coverImage coverImagePosition category tags readTime views publishedAt authorName createdAt')
         .sort(sortOption)
         .skip(skip)
         .limit(limitNum),
