@@ -65,9 +65,6 @@ exports.setVaultPin = async (req, res) => {
 
 exports.getAllUsers = async (req, res) => {
   try {
-    if (req.user.role !== 'Admin') {
-      return sendResponse(res, 403, false, 'Admin access required');
-    }
     const users = await User.find()
       .select('-password -vaultPin')
       .populate('departments', 'name')
