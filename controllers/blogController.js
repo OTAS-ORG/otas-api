@@ -3,8 +3,23 @@ const AuditLog = require('../models/AuditLog');
 const { uploadToR2 } = require('../utils/r2Storage');
 const sendResponse = require('../utils/response');
 
-// Helper to generate a URL-friendly unique slug
-const generateSlug = async (title, currentId = null) => {
+// Helper to build project filter (backward compatible with existing documents where project is not set)
+const getProjectQuery = (project) => {
+  const p = (project || 'otas').toLowerCase();
+  if (p === 'all') return null;
+  if (p === 'autoshop') return { project: 'autoshop' };
+  // For 'otas', match documents with project: 'otas' OR legacy documents where project is null / missing
+  return {
+    $or: [
+      { project: 'otas' },
+      { project: { $exists: false } },
+      { project: null },
+    ],
+  };
+};
+
+// Helper to generate a URL-friendly unique slug (scoped per project)
+const generateSlug = async (title, currentId = null, project = 'otas') => {
   let baseSlug = title
     .toLowerCase()
     .trim()
@@ -18,9 +33,10 @@ const generateSlug = async (title, currentId = null) => {
 
   let slug = baseSlug;
   let counter = 1;
+  const projectScope = (project && project.toLowerCase() === 'autoshop') ? 'autoshop' : 'otas';
 
   while (true) {
-    const query = { slug };
+    const query = { slug, project: projectScope };
     if (currentId) {
       query._id = { $ne: currentId };
     }
@@ -63,29 +79,44 @@ exports.uploadBlogImage = async (req, res) => {
 // Get all blogs (Admin / Staff dashboard with filters & pagination)
 exports.getBlogs = async (req, res) => {
   try {
-    const { search, category, status, tag, sort = 'newest', page = 1, limit = 10 } = req.query;
-    const filter = {};
+    // Background migration: backfill legacy blogs without project to 'otas'
+    Blog.updateMany(
+      { $or: [{ project: { $exists: false } }, { project: null }] },
+      { $set: { project: 'otas' } }
+    ).catch(() => {});
+
+    const { search, category, status, tag, sort = 'newest', page = 1, limit = 10, project = 'otas' } = req.query;
+    const andConditions = [];
+
+    const projectCondition = getProjectQuery(project);
+    if (projectCondition) {
+      andConditions.push(projectCondition);
+    }
 
     if (status && status !== 'All') {
-      filter.status = status;
+      andConditions.push({ status });
     }
 
     if (category && category !== 'All') {
-      filter.category = category;
+      andConditions.push({ category });
     }
 
     if (tag) {
-      filter.tags = tag;
+      andConditions.push({ tags: tag });
     }
 
     if (search) {
-      filter.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { excerpt: { $regex: search, $options: 'i' } },
-        { content: { $regex: search, $options: 'i' } },
-        { tags: { $regex: search, $options: 'i' } },
-      ];
+      andConditions.push({
+        $or: [
+          { title: { $regex: search, $options: 'i' } },
+          { excerpt: { $regex: search, $options: 'i' } },
+          { content: { $regex: search, $options: 'i' } },
+          { tags: { $regex: search, $options: 'i' } },
+        ],
+      });
     }
+
+    const filter = andConditions.length > 0 ? { $and: andConditions } : {};
 
     let sortOption = { createdAt: -1 };
     if (sort === 'oldest') sortOption = { createdAt: 1 };
@@ -139,15 +170,17 @@ exports.getBlogById = async (req, res) => {
 // Create new blog post
 exports.createBlog = async (req, res) => {
   try {
-    const { title, content, excerpt, coverImage, coverImagePosition, category, tags, status, customSlug } = req.body;
+    const { title, content, excerpt, coverImage, coverImagePosition, category, tags, status, customSlug, project = 'otas' } = req.body;
 
     if (!title || !content) {
       return sendResponse(res, 400, false, 'Title and content are required');
     }
 
+    const projectScope = (project && project.toLowerCase() === 'autoshop') ? 'autoshop' : 'otas';
+
     const slug = customSlug
-      ? await generateSlug(customSlug)
-      : await generateSlug(title);
+      ? await generateSlug(customSlug, null, projectScope)
+      : await generateSlug(title, null, projectScope);
 
     const parsedTags = Array.isArray(tags)
       ? tags.map((t) => t.trim()).filter(Boolean)
@@ -158,6 +191,7 @@ exports.createBlog = async (req, res) => {
     const blog = await Blog.create({
       title,
       slug,
+      project: projectScope,
       content,
       excerpt: excerpt || title,
       coverImage: coverImage || '',
@@ -175,7 +209,7 @@ exports.createBlog = async (req, res) => {
       await AuditLog.create({
         action: 'CREATE',
         user: req.user.username || 'Admin',
-        details: `Created blog post: "${blog.title}" (${blog.status})`,
+        details: `Created blog post: "${blog.title}" (${blog.project}) (${blog.status})`,
       });
     } catch (auditErr) {
       console.warn('AuditLog creation warning:', auditErr.message);
@@ -191,22 +225,28 @@ exports.createBlog = async (req, res) => {
 // Update blog post
 exports.updateBlog = async (req, res) => {
   try {
-    const { title, content, excerpt, coverImage, coverImagePosition, category, tags, status, customSlug } = req.body;
+    const { title, content, excerpt, coverImage, coverImagePosition, category, tags, status, customSlug, project } = req.body;
 
     const blog = await Blog.findById(req.params.id);
     if (!blog) {
       return sendResponse(res, 404, false, 'Blog not found');
     }
 
+    const projectScope = project !== undefined
+      ? ((project && project.toLowerCase() === 'autoshop') ? 'autoshop' : 'otas')
+      : (blog.project || 'otas');
+
+    blog.project = projectScope;
+
     if (title && title !== blog.title && !customSlug) {
-      blog.slug = await generateSlug(title, blog._id);
+      blog.slug = await generateSlug(title, blog._id, projectScope);
       blog.title = title;
     } else if (title) {
       blog.title = title;
     }
 
     if (customSlug && customSlug !== blog.slug) {
-      blog.slug = await generateSlug(customSlug, blog._id);
+      blog.slug = await generateSlug(customSlug, blog._id, projectScope);
     }
 
     if (content !== undefined) blog.content = content;
@@ -281,12 +321,24 @@ exports.deleteBlog = async (req, res) => {
 // Get blog statistics summary
 exports.getBlogStats = async (req, res) => {
   try {
+    const { project = 'otas' } = req.query;
+    const projectCondition = getProjectQuery(project);
+
+    const baseFilter = projectCondition ? projectCondition : {};
+    const buildFilter = (extra = {}) => {
+      if (!projectCondition) return extra;
+      return { $and: [projectCondition, extra] };
+    };
+
     const [total, published, draft, archived, totalViewsResult] = await Promise.all([
-      Blog.countDocuments(),
-      Blog.countDocuments({ status: 'Published' }),
-      Blog.countDocuments({ status: 'Draft' }),
-      Blog.countDocuments({ status: 'Archived' }),
-      Blog.aggregate([{ $group: { _id: null, totalViews: { $sum: '$views' } } }]),
+      Blog.countDocuments(baseFilter),
+      Blog.countDocuments(buildFilter({ status: 'Published' })),
+      Blog.countDocuments(buildFilter({ status: 'Draft' })),
+      Blog.countDocuments(buildFilter({ status: 'Archived' })),
+      Blog.aggregate([
+        ...(projectCondition ? [{ $match: projectCondition }] : []),
+        { $group: { _id: null, totalViews: { $sum: '$views' } } },
+      ]),
     ]);
 
     const totalViews = totalViewsResult[0]?.totalViews || 0;
@@ -308,28 +360,40 @@ exports.getBlogStats = async (req, res) => {
 // PUBLIC PORTFOLIO CONTROLLERS (NO AUTH)
 // ==========================================
 
-// Public: Get published blogs for portfolio
+// Public: Get published blogs for portfolio (OTAS / AutoShop)
 exports.getPublicBlogs = async (req, res) => {
   try {
     const { category, tag, search, sort = 'latest', page = 1, limit = 9 } = req.query;
+    const project = (req.query.project || req.params.project || req.projectScope || 'otas').toLowerCase();
 
-    const filter = { status: 'Published' };
+    const andConditions = [
+      { status: 'Published' },
+    ];
+
+    const projectCondition = getProjectQuery(project);
+    if (projectCondition) {
+      andConditions.push(projectCondition);
+    }
 
     if (category && category !== 'All') {
-      filter.category = category;
+      andConditions.push({ category });
     }
 
     if (tag) {
-      filter.tags = tag;
+      andConditions.push({ tags: tag });
     }
 
     if (search) {
-      filter.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { excerpt: { $regex: search, $options: 'i' } },
-        { tags: { $regex: search, $options: 'i' } },
-      ];
+      andConditions.push({
+        $or: [
+          { title: { $regex: search, $options: 'i' } },
+          { excerpt: { $regex: search, $options: 'i' } },
+          { tags: { $regex: search, $options: 'i' } },
+        ],
+      });
     }
+
+    const filter = { $and: andConditions };
 
     let sortOption = { publishedAt: -1, createdAt: -1 };
     if (sort === 'popular') sortOption = { views: -1 };
@@ -341,7 +405,7 @@ exports.getPublicBlogs = async (req, res) => {
 
     const [blogs, total] = await Promise.all([
       Blog.find(filter)
-        .select('title slug excerpt coverImage coverImagePosition category tags readTime views publishedAt authorName createdAt')
+        .select('title slug excerpt coverImage coverImagePosition category tags readTime views publishedAt authorName project createdAt')
         .sort(sortOption)
         .skip(skip)
         .limit(limitNum),
@@ -350,6 +414,7 @@ exports.getPublicBlogs = async (req, res) => {
 
     sendResponse(res, 200, true, 'Public blogs fetched successfully', {
       blogs,
+      project,
       pagination: {
         total,
         page: pageNum,
@@ -367,12 +432,23 @@ exports.getPublicBlogs = async (req, res) => {
 exports.getPublicBlogBySlugOrId = async (req, res) => {
   try {
     const { slugOrId } = req.params;
+    const project = (req.query.project || req.params.project || req.projectScope || 'otas').toLowerCase();
 
     // Check if it matches an ObjectId or slug
     const isObjectId = /^[0-9a-fA-F]{24}$/.test(slugOrId);
-    const query = isObjectId
-      ? { _id: slugOrId, status: 'Published' }
-      : { slug: slugOrId.toLowerCase(), status: 'Published' };
+    const idOrSlugCondition = isObjectId
+      ? { _id: slugOrId }
+      : { slug: slugOrId.toLowerCase() };
+
+    const projectCondition = getProjectQuery(project);
+
+    const query = {
+      $and: [
+        { status: 'Published' },
+        idOrSlugCondition,
+        ...(projectCondition ? [projectCondition] : []),
+      ],
+    };
 
     // Atomically increment views count and return updated document
     const blog = await Blog.findOneAndUpdate(
@@ -395,8 +471,16 @@ exports.getPublicBlogBySlugOrId = async (req, res) => {
 // Public: Get list of published categories with counts
 exports.getPublicCategories = async (req, res) => {
   try {
+    const project = (req.query.project || req.params.project || req.projectScope || 'otas').toLowerCase();
+    const projectCondition = getProjectQuery(project);
+
+    const matchConditions = [
+      { status: 'Published' },
+      ...(projectCondition ? [projectCondition] : []),
+    ];
+
     const categories = await Blog.aggregate([
-      { $match: { status: 'Published' } },
+      { $match: { $and: matchConditions } },
       { $group: { _id: '$category', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]);
@@ -411,4 +495,20 @@ exports.getPublicCategories = async (req, res) => {
     console.error('Error in getPublicCategories:', error);
     sendResponse(res, 500, false, error.message);
   }
+};
+
+// AutoShop dedicated public endpoints
+exports.getPublicAutoShopBlogs = async (req, res) => {
+  req.projectScope = 'autoshop';
+  return exports.getPublicBlogs(req, res);
+};
+
+exports.getPublicAutoShopBlogBySlugOrId = async (req, res) => {
+  req.projectScope = 'autoshop';
+  return exports.getPublicBlogBySlugOrId(req, res);
+};
+
+exports.getPublicAutoShopCategories = async (req, res) => {
+  req.projectScope = 'autoshop';
+  return exports.getPublicCategories(req, res);
 };

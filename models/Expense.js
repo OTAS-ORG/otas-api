@@ -16,11 +16,15 @@ const expenseSchema = new mongoose.Schema({
     enum: ['Pending', 'Approved', 'Rejected'],
     default: 'Pending'
   },
-  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  isReimbursedViaPayroll: { type: Boolean, default: false },
+  salaryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Salary' },
+  reimbursedAt: { type: Date }
 }, { timestamps: true });
 
 expenseSchema.index({ date: -1 });
 expenseSchema.index({ category: 1 });
 expenseSchema.index({ createdBy: 1 });
+expenseSchema.index({ isReimbursedViaPayroll: 1 });
 
 module.exports = mongoose.model('Expense', expenseSchema);

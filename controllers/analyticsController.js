@@ -205,9 +205,11 @@ exports.getDashboard = async (req, res) => {
         { $group: {
           _id: null,
           totalNetPay: { $sum: '$netPay' },
+          totalActualSalaryCost: { $sum: { $ifNull: ['$actualSalaryCost', '$netPay'] } },
           totalBaseSalary: { $sum: '$baseSalary' },
           totalAllowances: { $sum: '$totalAllowances' },
           totalDeductions: { $sum: '$totalDeductions' },
+          totalReimbursedExpenses: { $sum: { $ifNull: ['$reimbursedExpensesTotal', 0] } },
           count: { $sum: 1 },
         }},
       ]),
@@ -218,9 +220,11 @@ exports.getDashboard = async (req, res) => {
         { $group: {
           _id: { month: '$month' },
           totalNetPay: { $sum: '$netPay' },
+          totalActualSalaryCost: { $sum: { $ifNull: ['$actualSalaryCost', '$netPay'] } },
           totalBaseSalary: { $sum: '$baseSalary' },
           totalAllowances: { $sum: '$totalAllowances' },
           totalDeductions: { $sum: '$totalDeductions' },
+          totalReimbursedExpenses: { $sum: { $ifNull: ['$reimbursedExpensesTotal', 0] } },
           count: { $sum: 1 },
         }},
         { $sort: { '_id.month': 1 } },

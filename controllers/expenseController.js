@@ -17,7 +17,7 @@ const createAudit = async (expenseId, action, details, user) => {
 
 exports.getExpenses = async (req, res) => {
   try {
-    const { dateFrom, dateTo, category, search, status, department, page = 1, limit = 50 } = req.query;
+    const { dateFrom, dateTo, category, search, status, department, userId, createdBy, page = 1, limit = 50 } = req.query;
     const query = {};
 
     if (dateFrom || dateTo) {
@@ -28,6 +28,10 @@ exports.getExpenses = async (req, res) => {
     if (category) query.category = category;
     if (status) query.status = status;
     if (department) query.department = department;
+    const targetUser = userId || createdBy;
+    if (targetUser && targetUser !== 'all') {
+      query.createdBy = targetUser;
+    }
     if (search) {
       query.$or = [
         { description: { $regex: search, $options: 'i' } },

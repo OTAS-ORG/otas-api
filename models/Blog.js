@@ -11,7 +11,14 @@ const blogSchema = new mongoose.Schema(
     slug: {
       type: String,
       required: [true, 'Slug is required'],
-      unique: true,
+      trim: true,
+      lowercase: true,
+      index: true,
+    },
+    project: {
+      type: String,
+      enum: ['otas', 'autoshop'],
+      default: 'otas',
       trim: true,
       lowercase: true,
       index: true,
@@ -77,6 +84,9 @@ const blogSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+// Compound index for unique slug within each project
+blogSchema.index({ slug: 1, project: 1 }, { unique: true });
 
 // Auto calculate read time and publish date helper (Mongoose 9 async hook)
 blogSchema.pre('save', async function () {

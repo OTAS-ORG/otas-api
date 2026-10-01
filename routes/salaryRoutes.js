@@ -7,6 +7,7 @@ router.use(protect);
 router.use(financeOnly);
 
 router.get('/summary', salaryController.getSalarySummary);
+router.get('/unreimbursed-expenses/:userId', salaryController.getUnreimbursedExpenses);
 router.get('/', salaryController.getSalaries);
 router.get('/:id', salaryController.getSalaryById);
 router.post('/', salaryController.createSalary);

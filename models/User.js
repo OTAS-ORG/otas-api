@@ -11,6 +11,13 @@ const userSchema = new mongoose.Schema({
   },
   department_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
   departments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Department' }],
+  employeeId: { type: String, default: '' },
+  position: { type: String, default: '' },
+  dateOfJoining: { type: Date },
+  department: { type: String, default: '' },
+  baseSalary: { type: Number, default: 0 },
+  fullDayDeduction: { type: Number, default: 0 },
+  halfDayDeduction: { type: Number, default: 0 },
   vaultPin: { type: String },
   telegramChatId: { type: String, sparse: true, unique: true }
 }, { timestamps: true });

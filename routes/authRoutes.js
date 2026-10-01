@@ -9,6 +9,7 @@ router.post('/users', protect, authController.createUser);
 router.put('/users/:id/departments', protect, authController.updateUserDepartments);
 router.put('/users/:id/role', protect, authController.updateUserRole);
 router.put('/users/:id/telegram', protect, authController.updateUserTelegramChatId);
+router.put('/users/:id/employee-info', protect, authController.updateEmployeeInfo);
 router.post('/set-vault-pin', protect, authController.setVaultPin);
 router.post('/verify-vault-pin', protect, authController.verifyVaultPin);
 

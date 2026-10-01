@@ -21,6 +21,13 @@ exports.login = async (req, res) => {
         username: user.username,
         role: user.role,
         departments: user.departments ? user.departments.map(d => d.name) : [],
+        employeeId: user.employeeId || '',
+        position: user.position || '',
+        dateOfJoining: user.dateOfJoining || null,
+        department: user.department || '',
+        baseSalary: user.baseSalary || 0,
+        fullDayDeduction: user.fullDayDeduction || 0,
+        halfDayDeduction: user.halfDayDeduction || 0,
         token: generateToken(user._id),
       };
       sendResponse(res, 200, true, 'Login successful', userData);
@@ -198,7 +205,7 @@ exports.createUser = async (req, res) => {
       return sendResponse(res, 403, false, 'Admin access required');
     }
 
-    const { username, password, role } = req.body;
+    const { username, password, role, employeeId, position, dateOfJoining, department, baseSalary, fullDayDeduction, halfDayDeduction } = req.body;
 
     if (!username || !password) {
       return sendResponse(res, 400, false, 'Username and password are required');
@@ -209,12 +216,58 @@ exports.createUser = async (req, res) => {
       return sendResponse(res, 400, false, 'Username already exists');
     }
 
-    const user = await User.create({ username, password, role: role || 'User' });
-    const userData = await User.findById(user._id).select('-password -vaultPin');
+    const user = await User.create({
+      username,
+      password,
+      role: role || 'User',
+      employeeId: employeeId || '',
+      position: position || '',
+      dateOfJoining: dateOfJoining || null,
+      department: department || '',
+      baseSalary: Number(baseSalary) || 0,
+      fullDayDeduction: Number(fullDayDeduction) || 0,
+      halfDayDeduction: Number(halfDayDeduction) || 0,
+    });
+    const userData = await User.findById(user._id).select('-password -vaultPin').populate('departments', 'name');
 
     sendResponse(res, 201, true, 'User created successfully', userData);
   } catch (error) {
     console.error('Error in createUser:', error);
+    sendResponse(res, 500, false, error.message);
+  }
+};
+
+exports.updateEmployeeInfo = async (req, res) => {
+  try {
+    if (req.user.role !== 'Admin') {
+      return sendResponse(res, 403, false, 'Admin access required');
+    }
+
+    const { id } = req.params;
+    const { employeeId, position, dateOfJoining, department, baseSalary, fullDayDeduction, halfDayDeduction } = req.body;
+
+    const user = await User.findById(id);
+    if (!user) {
+      return sendResponse(res, 404, false, 'User not found');
+    }
+
+    if (employeeId !== undefined) user.employeeId = employeeId;
+    if (position !== undefined) user.position = position;
+    if (dateOfJoining !== undefined) user.dateOfJoining = dateOfJoining || null;
+    if (department !== undefined) user.department = department;
+    if (baseSalary !== undefined) user.baseSalary = Number(baseSalary) || 0;
+    if (fullDayDeduction !== undefined) user.fullDayDeduction = Number(fullDayDeduction) || 0;
+    if (halfDayDeduction !== undefined) user.halfDayDeduction = Number(halfDayDeduction) || 0;
+
+    await user.save();
+
+    const updated = await User.findById(id)
+      .select('-password -vaultPin')
+      .populate('departments', 'name');
+
+    sendResponse(res, 200, true, 'Employee info updated successfully', updated);
+  } catch (error) {
+    console.error('Error in updateEmployeeInfo:', error);
     sendResponse(res, 500, false, error.message);
   }
 };
