@@ -27,7 +27,7 @@ exports.getLeaves = async (req, res) => {
     }
 
     const leaves = await Leave.find(filter)
-      .populate('userId', 'username employeeId position department baseSalary fullDayDeduction halfDayDeduction')
+      .populate('userId', 'username fullName employeeId position department baseSalary fullDayDeduction halfDayDeduction')
       .sort({ date: -1 });
 
     sendResponse(res, 200, true, 'Leaves fetched successfully', leaves);
@@ -133,7 +133,7 @@ exports.createLeave = async (req, res) => {
 
     const leave = await Leave.create({
       userId,
-      employeeName: employeeName || user.username,
+      employeeName: employeeName || user.fullName || user.username,
       date: new Date(date),
       leaveType,
       halfDaySession: leaveType === 'Half' ? (halfDaySession || 'Morning') : null,

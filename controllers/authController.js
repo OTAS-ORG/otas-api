@@ -19,6 +19,7 @@ exports.login = async (req, res) => {
       const userData = {
         _id: user._id,
         username: user.username,
+        fullName: user.fullName || '',
         role: user.role,
         departments: user.departments ? user.departments.map(d => d.name) : [],
         employeeId: user.employeeId || '',
@@ -205,7 +206,7 @@ exports.createUser = async (req, res) => {
       return sendResponse(res, 403, false, 'Admin access required');
     }
 
-    const { username, password, role, employeeId, position, dateOfJoining, department, baseSalary, fullDayDeduction, halfDayDeduction } = req.body;
+    const { username, password, fullName, role, employeeId, position, dateOfJoining, department, baseSalary, fullDayDeduction, halfDayDeduction } = req.body;
 
     if (!username || !password) {
       return sendResponse(res, 400, false, 'Username and password are required');
@@ -219,6 +220,7 @@ exports.createUser = async (req, res) => {
     const user = await User.create({
       username,
       password,
+      fullName: fullName ? fullName.trim() : '',
       role: role || 'User',
       employeeId: employeeId || '',
       position: position || '',
@@ -244,13 +246,14 @@ exports.updateEmployeeInfo = async (req, res) => {
     }
 
     const { id } = req.params;
-    const { employeeId, position, dateOfJoining, department, baseSalary, fullDayDeduction, halfDayDeduction } = req.body;
+    const { fullName, employeeId, position, dateOfJoining, department, baseSalary, fullDayDeduction, halfDayDeduction } = req.body;
 
     const user = await User.findById(id);
     if (!user) {
       return sendResponse(res, 404, false, 'User not found');
     }
 
+    if (fullName !== undefined) user.fullName = fullName ? fullName.trim() : '';
     if (employeeId !== undefined) user.employeeId = employeeId;
     if (position !== undefined) user.position = position;
     if (dateOfJoining !== undefined) user.dateOfJoining = dateOfJoining || null;

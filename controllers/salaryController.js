@@ -42,7 +42,7 @@ exports.getSalaries = async (req, res) => {
     const [salaries, total] = await Promise.all([
       Salary.find(filter)
         .populate('createdBy', 'username')
-        .populate('userId', 'username')
+        .populate('userId', 'username fullName')
         .sort({ year: -1, month: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
@@ -65,7 +65,7 @@ exports.getSalaryById = async (req, res) => {
   try {
     const salary = await Salary.findById(req.params.id)
       .populate('createdBy', 'username')
-      .populate('userId', 'username');
+      .populate('userId', 'username fullName');
     if (!salary) {
       return sendResponse(res, 404, false, 'Salary not found');
     }
@@ -103,7 +103,7 @@ exports.createSalary = async (req, res) => {
 
     const populated = await Salary.findById(salary._id)
       .populate('createdBy', 'username')
-      .populate('userId', 'username');
+      .populate('userId', 'username fullName');
 
     sendResponse(res, 201, true, 'Salary created successfully', populated);
   } catch (error) {
@@ -162,7 +162,7 @@ exports.updateSalary = async (req, res) => {
 
     const populated = await Salary.findById(salary._id)
       .populate('createdBy', 'username')
-      .populate('userId', 'username');
+      .populate('userId', 'username fullName');
 
     sendResponse(res, 200, true, 'Salary updated successfully', populated);
   } catch (error) {

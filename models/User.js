@@ -11,6 +11,7 @@ const userSchema = new mongoose.Schema({
   },
   department_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
   departments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Department' }],
+  fullName: { type: String, default: '', trim: true },
   employeeId: { type: String, default: '' },
   position: { type: String, default: '' },
   dateOfJoining: { type: Date },
