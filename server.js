@@ -28,6 +28,7 @@ const documentRoutes = require("./routes/documentRoutes");
 const eventRoutes = require("./routes/eventRoutes");
 const blogRoutes = require("./routes/blogRoutes");
 const leaveRoutes = require("./routes/leaveRoutes");
+const projectPlanRoutes = require("./routes/projectPlanRoutes");
 const User = require("./models/User");
 const Department = require("./models/Department");
 const seedFormConfigs = require("./seeders/formConfigSeeder");
@@ -69,6 +70,7 @@ app.use("/api/documents", documentRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/blogs", blogRoutes);
 app.use("/api/leaves", leaveRoutes);
+app.use("/api/project-plans", projectPlanRoutes);
 
 // Telegram Bot Webhook endpoint
 // Telegram sends POST requests here with update payloads
