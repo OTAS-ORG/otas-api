@@ -13,12 +13,31 @@ const createAudit = async (expenseId, action, details, user) => {
   });
 };
 
+const canAccessAllExpenses = (user) => {
+  if (!user) return false;
+  if (user.role === 'Admin') return true;
+  if (user.departments && user.departments.some(d => (typeof d === 'string' ? d : d.name) === 'Finance')) {
+    return true;
+  }
+  return false;
+};
+
 // --- Expenses CRUD ---
 
 exports.getExpenses = async (req, res) => {
   try {
     const { dateFrom, dateTo, category, search, status, department, userId, createdBy, page = 1, limit = 50 } = req.query;
     const query = {};
+
+    const canViewAll = canAccessAllExpenses(req.user);
+    if (!canViewAll) {
+      query.createdBy = req.user._id;
+    } else {
+      const targetUser = userId || createdBy;
+      if (targetUser && targetUser !== 'all') {
+        query.createdBy = targetUser;
+      }
+    }
 
     if (dateFrom || dateTo) {
       query.date = {};
@@ -28,10 +47,6 @@ exports.getExpenses = async (req, res) => {
     if (category) query.category = category;
     if (status) query.status = status;
     if (department) query.department = department;
-    const targetUser = userId || createdBy;
-    if (targetUser && targetUser !== 'all') {
-      query.createdBy = targetUser;
-    }
     if (search) {
       query.$or = [
         { description: { $regex: search, $options: 'i' } },
@@ -66,6 +81,14 @@ exports.getExpenseById = async (req, res) => {
 
     if (!expense) return sendResponse(res, 404, false, 'Expense not found');
 
+    const canViewAll = canAccessAllExpenses(req.user);
+    const creatorId = expense.createdBy?._id ? expense.createdBy._id.toString() : expense.createdBy?.toString();
+    const isOwner = creatorId && creatorId === req.user._id.toString();
+
+    if (!canViewAll && !isOwner) {
+      return sendResponse(res, 403, false, 'Forbidden: You can only view your own expenses');
+    }
+
     sendResponse(res, 200, true, 'Expense retrieved successfully', expense);
   } catch (error) {
     console.error('Error in getExpenseById:', error);
@@ -76,6 +99,7 @@ exports.getExpenseById = async (req, res) => {
 exports.createExpense = async (req, res) => {
   try {
     const { description, amount, currency, exchangeRate, category, department, paymentMethod, clientId, notes, date, status } = req.body;
+    const canViewAll = canAccessAllExpenses(req.user);
 
     // Auto-save category if new
     if (category) {
@@ -104,7 +128,7 @@ exports.createExpense = async (req, res) => {
       paymentMethod,
       clientId: clientId || undefined,
       notes,
-      status: status || 'Pending',
+      status: canViewAll ? (status || 'Pending') : 'Pending',
       createdBy: req.user?._id
     });
 
@@ -126,6 +150,17 @@ exports.updateExpense = async (req, res) => {
   try {
     const { description, amount, currency, exchangeRate, category, department, paymentMethod, clientId, notes, date, status } = req.body;
 
+    const existing = await Expense.findById(req.params.id);
+    if (!existing) return sendResponse(res, 404, false, 'Expense not found');
+
+    const canViewAll = canAccessAllExpenses(req.user);
+    const creatorId = existing.createdBy?.toString();
+    const isOwner = creatorId && creatorId === req.user._id.toString();
+
+    if (!canViewAll && !isOwner) {
+      return sendResponse(res, 403, false, 'Forbidden: You can only update your own expenses');
+    }
+
     // Auto-save category if new
     if (category) {
       const exists = await ExpenseCategory.findOne({ name: category });
@@ -144,7 +179,19 @@ exports.updateExpense = async (req, res) => {
 
     const expense = await Expense.findByIdAndUpdate(
       req.params.id,
-      { date, description, amount, currency, exchangeRate, category, department, paymentMethod, clientId: clientId || undefined, notes, status },
+      {
+        date,
+        description,
+        amount,
+        currency,
+        exchangeRate,
+        category,
+        department,
+        paymentMethod,
+        clientId: clientId || undefined,
+        notes,
+        status: canViewAll ? (status || existing.status) : existing.status
+      },
       { new: true, runValidators: true }
     )
       .populate('clientId', 'companyName')
@@ -163,9 +210,18 @@ exports.updateExpense = async (req, res) => {
 
 exports.deleteExpense = async (req, res) => {
   try {
-    const expense = await Expense.findByIdAndDelete(req.params.id);
-    if (!expense) return sendResponse(res, 404, false, 'Expense not found');
+    const existing = await Expense.findById(req.params.id);
+    if (!existing) return sendResponse(res, 404, false, 'Expense not found');
 
+    const canViewAll = canAccessAllExpenses(req.user);
+    const creatorId = existing.createdBy?.toString();
+    const isOwner = creatorId && creatorId === req.user._id.toString();
+
+    if (!canViewAll && !isOwner) {
+      return sendResponse(res, 403, false, 'Forbidden: You can only delete your own expenses');
+    }
+
+    await Expense.findByIdAndDelete(req.params.id);
     await AuditLog.deleteMany({ clientId: req.params.id });
 
     sendResponse(res, 200, true, 'Expense deleted successfully');
@@ -203,6 +259,10 @@ exports.createCategory = async (req, res) => {
 
 exports.deleteCategory = async (req, res) => {
   try {
+    if (req.user.role !== 'Admin') {
+      return sendResponse(res, 403, false, 'Admin access required to delete categories');
+    }
+
     const category = await ExpenseCategory.findByIdAndDelete(req.params.id);
     if (!category) return sendResponse(res, 404, false, 'Category not found');
 
@@ -223,6 +283,12 @@ exports.getExpenseSummary = async (req, res) => {
     const startDate = new Date(targetYear, 0, 1);
     const endDate = new Date(targetYear, 11, 31, 23, 59, 59, 999);
 
+    const canViewAll = canAccessAllExpenses(req.user);
+    const matchFilter = { date: { $gte: startDate, $lte: endDate } };
+    if (!canViewAll) {
+      matchFilter.createdBy = req.user._id;
+    }
+
     const mmkConvert = {
       $cond: [
         { $eq: ['$currency', 'USD'] },
@@ -233,7 +299,7 @@ exports.getExpenseSummary = async (req, res) => {
 
     // Monthly totals — all converted to MMK
     const monthlyData = await Expense.aggregate([
-      { $match: { date: { $gte: startDate, $lte: endDate } } },
+      { $match: matchFilter },
       { $addFields: { amountMMK: mmkConvert } },
       {
         $group: {
@@ -247,7 +313,7 @@ exports.getExpenseSummary = async (req, res) => {
 
     // Category breakdown — all converted to MMK
     const categoryBreakdown = await Expense.aggregate([
-      { $match: { date: { $gte: startDate, $lte: endDate } } },
+      { $match: matchFilter },
       { $addFields: { amountMMK: mmkConvert } },
       {
         $group: {
@@ -261,7 +327,7 @@ exports.getExpenseSummary = async (req, res) => {
 
     // Grand total — all converted to MMK
     const totalAgg = await Expense.aggregate([
-      { $match: { date: { $gte: startDate, $lte: endDate } } },
+      { $match: matchFilter },
       { $addFields: { amountMMK: mmkConvert } },
       {
         $group: {
