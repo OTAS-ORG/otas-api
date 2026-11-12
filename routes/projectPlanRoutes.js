@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const projectPlanController = require('../controllers/projectPlanController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, blockSales } = require('../middleware/authMiddleware');
 
 router.use(protect);
+router.use(blockSales);
 
 // Dashboard widget summary
 router.get('/widget/summary', projectPlanController.getDashboardWidgetSummary);

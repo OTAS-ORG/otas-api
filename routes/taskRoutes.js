@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const projectController = require('../controllers/projectController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, blockSales } = require('../middleware/authMiddleware');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -10,6 +10,7 @@ const upload = multer({
 });
 
 router.use(protect);
+router.use(blockSales);
 
 router.post('/upload', upload.single('file'), projectController.uploadTaskAttachment);
 router.get('/:taskId', projectController.getTask);

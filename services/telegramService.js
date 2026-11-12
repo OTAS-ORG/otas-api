@@ -4,9 +4,21 @@ const Task = require('../models/Task');
 const Project = require('../models/Project');
 const User = require('../models/User');
 
+const crypto = require('crypto');
+
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 let bot = null;
+
+/**
+ * Secret Telegram echoes back in the X-Telegram-Bot-Api-Secret-Token header.
+ * Uses TELEGRAM_WEBHOOK_SECRET if set, otherwise derives a stable value from the bot token.
+ */
+const getWebhookSecret = () => {
+  if (process.env.TELEGRAM_WEBHOOK_SECRET) return process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (!TOKEN) return '';
+  return crypto.createHash('sha256').update(`webhook:${TOKEN}`).digest('hex');
+};
 
 /**
  * Initialize the Telegram bot in webhook mode (polling: false).
@@ -32,7 +44,7 @@ const initBot = () => {
     const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL ||
       (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}/api/telegram/webhook`);
     if (webhookUrl) {
-      bot.setWebhook(webhookUrl).catch(err =>
+      bot.setWebhook(webhookUrl, { secret_token: getWebhookSecret() }).catch(err =>
         console.error('Telegram setWebhook failed:', err.message)
       );
     }
@@ -649,6 +661,7 @@ const processTelegramMessage = async (message, botInstance) => {
 module.exports = {
   initBot,
   getBot,
+  getWebhookSecret,
   notifyTicketAssigned,
   notifyTicketDueReminder,
   checkAndSendDueReminders,

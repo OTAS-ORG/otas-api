@@ -2,16 +2,16 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const ticketController = require('../controllers/ticketController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, cronAuth } = require('../middleware/authMiddleware');
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB
 });
 
-// Cron endpoint (accessible by Vercel Cron or Serverless runner without user JWT)
-router.get('/check-reminders', ticketController.triggerDueReminders);
-router.post('/check-reminders', ticketController.triggerDueReminders);
+// Cron endpoint (Vercel Cron, authenticated with CRON_SECRET instead of a user JWT)
+router.get('/check-reminders', cronAuth, ticketController.triggerDueReminders);
+router.post('/check-reminders', cronAuth, ticketController.triggerDueReminders);
 
 router.use(protect);
 

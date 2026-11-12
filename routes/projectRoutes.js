@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const projectController = require('../controllers/projectController');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, blockSales } = require('../middleware/authMiddleware');
 
 router.use(protect);
+router.use(blockSales);
 
 router.get('/', projectController.getProjects);
 router.post('/', projectController.createProject);

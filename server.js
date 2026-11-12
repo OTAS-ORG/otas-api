@@ -29,12 +29,13 @@ const eventRoutes = require("./routes/eventRoutes");
 const blogRoutes = require("./routes/blogRoutes");
 const leaveRoutes = require("./routes/leaveRoutes");
 const projectPlanRoutes = require("./routes/projectPlanRoutes");
-const User = require("./models/User");
-const Department = require("./models/Department");
 const seedFormConfigs = require("./seeders/formConfigSeeder");
+const seedDefaultData = require("./seeders/defaultDataSeeder");
+const { safeEqual } = require("./utils/safeEqual");
 const {
   initBot,
   getBot,
+  getWebhookSecret,
   checkAndSendDueReminders,
   processTicketCallback,
   processTaskCallback,
@@ -76,11 +77,17 @@ app.use("/api/project-plans", projectPlanRoutes);
 // Telegram sends POST requests here with update payloads
 // Handler is awaited before response so Vercel won't kill the function mid-processing
 app.post("/api/telegram/webhook", async (req, res) => {
+  // Reject requests that don't carry the secret registered via setWebhook
+  const secretHeader = req.get("X-Telegram-Bot-Api-Secret-Token") || "";
+  if (!safeEqual(secretHeader, getWebhookSecret())) {
+    return res.sendStatus(401);
+  }
+
   const bot = getBot();
   if (!bot) return res.sendStatus(200);
 
   try {
-    console.log("Telegram webhook payload:", JSON.stringify(req.body));
+    console.log("Telegram webhook update:", req.body?.update_id);
     const { callback_query, message } = req.body;
     if (callback_query?.data) {
       if (callback_query.data.startsWith("ticket:")) {
@@ -108,54 +115,8 @@ const connectDB = async () => {
     await mongoose.connect(process.env.MONGODB_URI);
     console.log("Connected to MongoDB");
 
-    // Seed default admin if no users exist
-    const userCount = await User.countDocuments();
-    if (userCount === 0) {
-      await User.create({
-        username: "admin",
-        password: "admin@987456",
-        role: "Admin",
-      });
-      console.log("Default admin user created");
-    }
-
-    // Seed default departments if none exist
-    const deptCount = await Department.countDocuments();
-    if (deptCount === 0) {
-      await Department.insertMany([
-        { name: "IT" },
-        { name: "HR" },
-        { name: "Sales" },
-        { name: "Finance" },
-        { name: "BD" },
-        { name: "PD" },
-        { name: "DQA" },
-        { name: "Marketing" },
-        { name: "Design" },
-      ]);
-      console.log("Default departments created");
-    }
-
-    // Auto-assign departments to users based on username (if not already assigned)
-    const userDeptMap = {
-      TSO: ["BD", "Finance"],
-      HOW: ["Design"],
-      HHA: ["Marketing"],
-      WTDM: ["DQA"],
-      "Aung Aung Oo": ["BD"],
-      yaemyintthu: ["Sales"],
-    };
-    for (const [username, deptNames] of Object.entries(userDeptMap)) {
-      for (const deptName of deptNames) {
-        const dept = await Department.findOne({ name: deptName });
-        if (dept) {
-          await User.updateMany(
-            { username, departments: { $ne: dept._id } },
-            { $addToSet: { departments: dept._id } },
-          );
-        }
-      }
-    }
+    // Seed default admin, departments, and (opt-in) user department mapping
+    await seedDefaultData();
 
     // Seed default onboarding form configs
     await seedFormConfigs();
