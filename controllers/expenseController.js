@@ -1,363 +1,61 @@
-const Expense = require('../models/Expense');
-const ExpenseCategory = require('../models/ExpenseCategory');
-const ExpenseDepartment = require('../models/ExpenseDepartment');
-const AuditLog = require('../models/AuditLog');
 const sendResponse = require('../utils/response');
+const expenses = require('../repositories/expenseRepository');
 
-const createAudit = async (expenseId, action, details, user) => {
-  await AuditLog.create({
-    clientId: expenseId,
-    action,
-    details,
-    user: user || 'Core Team'
-  });
+exports.getExpenses = async (req, res, next) => {
+  try { sendResponse(res, 200, true, 'Expenses retrieved successfully', await expenses.getExpenses(req.user, req.query)); }
+  catch (error) { return next(error); }
 };
-
-const canAccessAllExpenses = (user) => {
-  if (!user) return false;
-  if (user.role === 'Admin') return true;
-  if (user.departments && user.departments.some(d => (typeof d === 'string' ? d : d.name) === 'Finance')) {
-    return true;
-  }
-  return false;
-};
-
-// --- Expenses CRUD ---
-
-exports.getExpenses = async (req, res) => {
+exports.getExpenseById = async (req, res, next) => {
   try {
-    const { dateFrom, dateTo, category, search, status, department, userId, createdBy, page = 1, limit = 50 } = req.query;
-    const query = {};
-
-    const canViewAll = canAccessAllExpenses(req.user);
-    if (!canViewAll) {
-      query.createdBy = req.user._id;
-    } else {
-      const targetUser = userId || createdBy;
-      if (targetUser && targetUser !== 'all') {
-        query.createdBy = targetUser;
-      }
-    }
-
-    if (dateFrom || dateTo) {
-      query.date = {};
-      if (dateFrom) query.date.$gte = new Date(dateFrom);
-      if (dateTo) query.date.$lte = new Date(dateTo + 'T23:59:59.999Z');
-    }
-    if (category) query.category = category;
-    if (status) query.status = status;
-    if (department) query.department = department;
-    if (search) {
-      query.$or = [
-        { description: { $regex: search, $options: 'i' } },
-        { notes: { $regex: search, $options: 'i' } },
-        { category: { $regex: search, $options: 'i' } },
-      ];
-    }
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const [expenses, total] = await Promise.all([
-      Expense.find(query)
-        .populate('clientId', 'companyName')
-        .populate('createdBy', 'username')
-        .sort({ date: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      Expense.countDocuments(query)
-    ]);
-
-    sendResponse(res, 200, true, 'Expenses retrieved successfully', { expenses, total, page: parseInt(page), pages: Math.ceil(total / parseInt(limit)) });
-  } catch (error) {
-    console.error('Error in getExpenses:', error);
-    sendResponse(res, 500, false, error.message);
-  }
-};
-
-exports.getExpenseById = async (req, res) => {
-  try {
-    const expense = await Expense.findById(req.params.id)
-      .populate('clientId', 'companyName contactPerson')
-      .populate('createdBy', 'username');
-
+    const expense = await expenses.getById(req.user, req.params.id);
     if (!expense) return sendResponse(res, 404, false, 'Expense not found');
-
-    const canViewAll = canAccessAllExpenses(req.user);
-    const creatorId = expense.createdBy?._id ? expense.createdBy._id.toString() : expense.createdBy?.toString();
-    const isOwner = creatorId && creatorId === req.user._id.toString();
-
-    if (!canViewAll && !isOwner) {
-      return sendResponse(res, 403, false, 'Forbidden: You can only view your own expenses');
-    }
-
     sendResponse(res, 200, true, 'Expense retrieved successfully', expense);
-  } catch (error) {
-    console.error('Error in getExpenseById:', error);
-    sendResponse(res, 500, false, error.message);
-  }
+  } catch (error) { return next(error); }
 };
-
-exports.createExpense = async (req, res) => {
-  try {
-    const { description, amount, currency, exchangeRate, category, department, paymentMethod, clientId, notes, date, status } = req.body;
-    const canViewAll = canAccessAllExpenses(req.user);
-
-    // Auto-save category if new
-    if (category) {
-      const exists = await ExpenseCategory.findOne({ name: category });
-      if (!exists) {
-        await ExpenseCategory.create({ name: category, createdBy: req.user?._id });
-      }
-    }
-
-    // Auto-save department if new
-    if (department) {
-      const deptExists = await ExpenseDepartment.findOne({ name: department });
-      if (!deptExists) {
-        await ExpenseDepartment.create({ name: department, createdBy: req.user?._id });
-      }
-    }
-
-    const expense = await Expense.create({
-      date: date || new Date(),
-      description,
-      amount,
-      currency: currency || 'MMK',
-      exchangeRate: exchangeRate || 0,
-      category,
-      department,
-      paymentMethod,
-      clientId: clientId || undefined,
-      notes,
-      status: canViewAll ? (status || 'Pending') : 'Pending',
-      createdBy: req.user?._id
-    });
-
-    const populated = await expense.populate([
-      { path: 'clientId', select: 'companyName' },
-      { path: 'createdBy', select: 'username' }
-    ]);
-
-    await createAudit(expense._id, 'EXPENSE_CREATED', { description, amount, category }, req.user?.username);
-
-    sendResponse(res, 201, true, 'Expense created successfully', populated);
-  } catch (error) {
-    console.error('Error in createExpense:', error);
-    sendResponse(res, 500, false, error.message);
-  }
+exports.createExpense = async (req, res, next) => {
+  try { sendResponse(res, 201, true, 'Expense created successfully', await expenses.create(req.user, req.body)); }
+  catch (error) { if (['ValidationError', 'CastError'].includes(error.name)) return sendResponse(res, 400, false, 'Invalid expense data'); return next(error); }
 };
-
-exports.updateExpense = async (req, res) => {
+exports.updateExpense = async (req, res, next) => {
   try {
-    const { description, amount, currency, exchangeRate, category, department, paymentMethod, clientId, notes, date, status } = req.body;
-
-    const existing = await Expense.findById(req.params.id);
-    if (!existing) return sendResponse(res, 404, false, 'Expense not found');
-
-    const canViewAll = canAccessAllExpenses(req.user);
-    const creatorId = existing.createdBy?.toString();
-    const isOwner = creatorId && creatorId === req.user._id.toString();
-
-    if (!canViewAll && !isOwner) {
-      return sendResponse(res, 403, false, 'Forbidden: You can only update your own expenses');
-    }
-
-    // Auto-save category if new
-    if (category) {
-      const exists = await ExpenseCategory.findOne({ name: category });
-      if (!exists) {
-        await ExpenseCategory.create({ name: category, createdBy: req.user?._id });
-      }
-    }
-
-    // Auto-save department if new
-    if (department) {
-      const deptExists = await ExpenseDepartment.findOne({ name: department });
-      if (!deptExists) {
-        await ExpenseDepartment.create({ name: department, createdBy: req.user?._id });
-      }
-    }
-
-    const expense = await Expense.findByIdAndUpdate(
-      req.params.id,
-      {
-        date,
-        description,
-        amount,
-        currency,
-        exchangeRate,
-        category,
-        department,
-        paymentMethod,
-        clientId: clientId || undefined,
-        notes,
-        status: canViewAll ? (status || existing.status) : existing.status
-      },
-      { new: true, runValidators: true }
-    )
-      .populate('clientId', 'companyName')
-      .populate('createdBy', 'username');
-
-    if (!expense) return sendResponse(res, 404, false, 'Expense not found');
-
-    await createAudit(expense._id, 'EXPENSE_UPDATED', { description, amount, category }, req.user?.username);
-
-    sendResponse(res, 200, true, 'Expense updated successfully', expense);
-  } catch (error) {
-    console.error('Error in updateExpense:', error);
-    sendResponse(res, 500, false, error.message);
-  }
+    const result = await expenses.update(req.user, req.params.id, req.body);
+    if (result.status === 'missing') return sendResponse(res, 404, false, 'Expense not found');
+    if (result.status === 'linked') return sendResponse(res, 409, false, 'Expense is linked to payroll');
+    sendResponse(res, 200, true, 'Expense updated successfully', result.expense);
+  } catch (error) { if (['ValidationError', 'CastError'].includes(error.name)) return sendResponse(res, 400, false, 'Invalid expense data'); return next(error); }
 };
-
-exports.deleteExpense = async (req, res) => {
+exports.deleteExpense = async (req, res, next) => {
   try {
-    const existing = await Expense.findById(req.params.id);
-    if (!existing) return sendResponse(res, 404, false, 'Expense not found');
-
-    const canViewAll = canAccessAllExpenses(req.user);
-    const creatorId = existing.createdBy?.toString();
-    const isOwner = creatorId && creatorId === req.user._id.toString();
-
-    if (!canViewAll && !isOwner) {
-      return sendResponse(res, 403, false, 'Forbidden: You can only delete your own expenses');
-    }
-
-    await Expense.findByIdAndDelete(req.params.id);
-    await AuditLog.deleteMany({ clientId: req.params.id });
-
+    const result = await expenses.remove(req.user, req.params.id);
+    if (result.status === 'missing') return sendResponse(res, 404, false, 'Expense not found');
+    if (result.status === 'linked') return sendResponse(res, 409, false, 'Expense is linked to payroll');
     sendResponse(res, 200, true, 'Expense deleted successfully');
-  } catch (error) {
-    console.error('Error in deleteExpense:', error);
-    sendResponse(res, 500, false, error.message);
-  }
+  } catch (error) { return next(error); }
 };
 
-// --- Categories ---
-
-exports.getCategories = async (req, res) => {
-  try {
-    const categories = await ExpenseCategory.find().sort({ name: 1 });
-    sendResponse(res, 200, true, 'Categories retrieved successfully', categories);
-  } catch (error) {
-    console.error('Error in getCategories:', error);
-    sendResponse(res, 500, false, error.message);
-  }
+exports.getCategories = async (req, res, next) => {
+  try { sendResponse(res, 200, true, 'Categories retrieved successfully', await expenses.getCategories(req.user)); }
+  catch (error) { return next(error); }
 };
-
-exports.createCategory = async (req, res) => {
+exports.createCategory = async (req, res, next) => {
   try {
-    const { name } = req.body;
-    const exists = await ExpenseCategory.findOne({ name });
-    if (exists) return sendResponse(res, 400, false, 'Category already exists');
-
-    const category = await ExpenseCategory.create({ name, createdBy: req.user?._id });
+    const category = await expenses.createCategory(req.user, req.body?.name);
+    if (!category) return sendResponse(res, 400, false, 'Category already exists');
     sendResponse(res, 201, true, 'Category created successfully', category);
-  } catch (error) {
-    console.error('Error in createCategory:', error);
-    sendResponse(res, 500, false, error.message);
-  }
+  } catch (error) { if (error.code === 11000) return sendResponse(res, 400, false, 'Category already exists'); return next(error); }
 };
-
-exports.deleteCategory = async (req, res) => {
+exports.deleteCategory = async (req, res, next) => {
   try {
-    if (req.user.role !== 'Admin') {
-      return sendResponse(res, 403, false, 'Admin access required to delete categories');
-    }
-
-    const category = await ExpenseCategory.findByIdAndDelete(req.params.id);
+    const category = await expenses.deleteCategory(req.user, req.params.id);
     if (!category) return sendResponse(res, 404, false, 'Category not found');
-
     sendResponse(res, 200, true, 'Category deleted successfully');
-  } catch (error) {
-    console.error('Error in deleteCategory:', error);
-    sendResponse(res, 500, false, error.message);
-  }
+  } catch (error) { return next(error); }
 };
-
-// --- Summary / Reports ---
-
-exports.getExpenseSummary = async (req, res) => {
-  try {
-    const { year } = req.query;
-    const targetYear = year ? parseInt(year) : new Date().getFullYear();
-
-    const startDate = new Date(targetYear, 0, 1);
-    const endDate = new Date(targetYear, 11, 31, 23, 59, 59, 999);
-
-    const canViewAll = canAccessAllExpenses(req.user);
-    const matchFilter = { date: { $gte: startDate, $lte: endDate } };
-    if (!canViewAll) {
-      matchFilter.createdBy = req.user._id;
-    }
-
-    const mmkConvert = {
-      $cond: [
-        { $eq: ['$currency', 'USD'] },
-        { $multiply: ['$amount', { $ifNull: ['$exchangeRate', 0] }] },
-        '$amount'
-      ]
-    };
-
-    // Monthly totals — all converted to MMK
-    const monthlyData = await Expense.aggregate([
-      { $match: matchFilter },
-      { $addFields: { amountMMK: mmkConvert } },
-      {
-        $group: {
-          _id: { month: { $month: '$date' } },
-          total: { $sum: '$amountMMK' },
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { '_id.month': 1 } }
-    ]);
-
-    // Category breakdown — all converted to MMK
-    const categoryBreakdown = await Expense.aggregate([
-      { $match: matchFilter },
-      { $addFields: { amountMMK: mmkConvert } },
-      {
-        $group: {
-          _id: '$category',
-          total: { $sum: '$amountMMK' },
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { total: -1 } }
-    ]);
-
-    // Grand total — all converted to MMK
-    const totalAgg = await Expense.aggregate([
-      { $match: matchFilter },
-      { $addFields: { amountMMK: mmkConvert } },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$amountMMK' },
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
-    const totalExpensesMMK = totalAgg[0]?.total || 0;
-
-    sendResponse(res, 200, true, 'Expense summary retrieved successfully', {
-      year: targetYear,
-      totalExpensesMMK,
-      monthlyData,
-      categoryBreakdown
-    });
-  } catch (error) {
-    console.error('Error in getExpenseSummary:', error);
-    sendResponse(res, 500, false, error.message);
-  }
+exports.getExpenseSummary = async (req, res, next) => {
+  try { sendResponse(res, 200, true, 'Expense summary retrieved successfully', await expenses.summary(req.user, req.query.year)); }
+  catch (error) { return next(error); }
 };
-
-exports.getDepartments = async (req, res) => {
-  try {
-    const departments = await ExpenseDepartment.find().sort({ name: 1 });
-    sendResponse(res, 200, true, 'Departments retrieved successfully', departments);
-  } catch (error) {
-    console.error('Error in getDepartments:', error);
-    sendResponse(res, 500, false, error.message);
-  }
+exports.getDepartments = async (req, res, next) => {
+  try { sendResponse(res, 200, true, 'Departments retrieved successfully', await expenses.getDepartments(req.user)); }
+  catch (error) { return next(error); }
 };

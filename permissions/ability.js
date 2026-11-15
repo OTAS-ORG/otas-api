@@ -13,6 +13,8 @@ const defineAbilityFor = (user) => {
   if (isPriceRole(user)) can('read', ['Invoice', 'InvoiceClient']);
   if (seesFinance(user)) {
     can(['create', 'update', 'delete'], 'Invoice');
+    can(['read', 'create', 'update', 'delete'], ['Salary', 'Expense']);
+    can('read', 'PayrollUser');
     can('read', 'FinanceSettings');
     // Temporary guard for existing finance endpoints; granular finance policies
     // and record-level checks are introduced with the relevant modules.
