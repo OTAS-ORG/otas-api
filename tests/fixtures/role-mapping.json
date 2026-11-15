@@ -1,0 +1,4 @@
+[
+  { "username": "example_developer", "roles": ["developer"] },
+  { "username": "example_dqa", "roles": ["dqa"] }
+]

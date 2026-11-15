@@ -32,6 +32,7 @@ const projectPlanRoutes = require("./routes/projectPlanRoutes");
 const seedFormConfigs = require("./seeders/formConfigSeeder");
 const seedDefaultData = require("./seeders/defaultDataSeeder");
 const { safeEqual } = require("./utils/safeEqual");
+const errorHandler = require("./middleware/errorHandler");
 const {
   initBot,
   getBot,
@@ -107,6 +108,9 @@ app.post("/api/telegram/webhook", async (req, res) => {
   res.sendStatus(200);
 });
 
+// Express 5 forwards thrown/rejected errors to the final error handler.
+app.use(errorHandler);
+
 // Database Connection & Seeder
 const connectDB = async () => {
   try {
@@ -122,6 +126,7 @@ const connectDB = async () => {
     await seedFormConfigs();
   } catch (err) {
     console.error("MongoDB connection error:", err);
+    throw err;
   }
 };
 

@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const User = require('../models/User');
 const Department = require('../models/Department');
 
@@ -19,16 +18,14 @@ const seedDefaultAdmin = async () => {
   const userCount = await User.countDocuments();
   if (userCount > 0) return;
 
-  const envPassword = process.env.DEFAULT_ADMIN_PASSWORD;
-  const password = envPassword || crypto.randomBytes(12).toString('base64url');
-
-  await User.create({ username: 'admin', password, role: 'Admin' });
-
-  if (envPassword) {
-    console.log('Default admin user created (password from DEFAULT_ADMIN_PASSWORD)');
-  } else {
-    console.log(`Default admin user created. Generated password: ${password} — change it after first login.`);
+  const username = process.env.DEFAULT_ADMIN_USERNAME;
+  const password = process.env.DEFAULT_ADMIN_PASSWORD;
+  if (!username || !username.trim() || ['admin', 'system'].includes(username.trim().toLowerCase()) ||
+      username !== username.trim() || !password || !password.trim() || Buffer.byteLength(password, 'utf8') > 72) {
+    throw new Error('A personal DEFAULT_ADMIN_USERNAME and DEFAULT_ADMIN_PASSWORD are required for initial setup');
   }
+  await User.create({ username, password, role: 'User', roles: ['ceo_bd'], active: true, mustChangePassword: true });
+  console.log('Initial personal CEO account created; password change required');
 };
 
 const seedDepartments = async () => {
@@ -63,3 +60,4 @@ const seedDefaultData = async () => {
 };
 
 module.exports = seedDefaultData;
+module.exports.seedDefaultAdmin = seedDefaultAdmin;

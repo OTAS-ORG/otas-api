@@ -2,35 +2,54 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { getJwtSecret } = require('../utils/jwtSecret');
 const { safeEqual } = require('../utils/safeEqual');
+const mongoose = require('mongoose');
+const sendResponse = require('../utils/response');
+const { isTokenVersion } = require('../utils/authSession');
 
-const protect = async (req, res, next) => {
-  let token;
-
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith('Bearer')
-  ) {
-    try {
-      // Get token from header
-      token = req.headers.authorization.split(' ')[1];
-
-      // Verify token
-      const decoded = jwt.verify(token, getJwtSecret());
-
-      // Get user from the token and attach to request
-      req.user = await User.findById(decoded.id).select('-password').populate('departments', 'name');
-
-      next();
-    } catch (error) {
-      console.error(error);
-      res.status(401).json({ message: 'Not authorized, token failed' });
-    }
+const authenticate = async (req, res, next, allowPasswordChange) => {
+  const match = /^Bearer ([^\s]+)$/i.exec(req.headers.authorization || '');
+  if (!match) return sendResponse(res, 401, false, 'A Bearer token is required', null, 'NOT_AUTHORIZED');
+  let secret;
+  try {
+    secret = getJwtSecret();
+  } catch {
+    return sendResponse(res, 503, false, 'Authentication is unavailable', null, 'AUTH_UNAVAILABLE');
   }
-
-  if (!token) {
-    res.status(401).json({ message: 'Not authorized, no token' });
+  let decoded;
+  try {
+    decoded = jwt.verify(match[1], secret, { algorithms: ['HS256'] });
+  } catch {
+    return sendResponse(res, 401, false, 'Invalid or expired token', null, 'NOT_AUTHORIZED');
   }
+  if (!decoded || typeof decoded.id !== 'string' || !mongoose.isObjectIdOrHexString(decoded.id)) {
+    return sendResponse(res, 401, false, 'Invalid token identity', null, 'NOT_AUTHORIZED');
+  }
+  if (!isTokenVersion(decoded.tokenVersion) || !Number.isFinite(decoded.exp)) {
+    return sendResponse(res, 401, false, 'Session has been revoked; sign in again', null, 'TOKEN_REVOKED');
+  }
+  let user;
+  try {
+    user = await User.findById(decoded.id).select('-password -vaultPin').populate('departments', 'name');
+  } catch (error) {
+    console.error('Authentication lookup failed:', error.name);
+    return sendResponse(res, 503, false, 'Authentication is unavailable', null, 'AUTH_UNAVAILABLE');
+  }
+  if (!user) return sendResponse(res, 401, false, 'Account is unavailable', null, 'NOT_AUTHORIZED');
+  if (user.active !== true) return sendResponse(res, 401, false, 'Account is disabled', null, 'USER_DISABLED');
+  if (!isTokenVersion(user.tokenVersion) || user.tokenVersion !== decoded.tokenVersion) {
+    return sendResponse(res, 401, false, 'Session has been revoked', null, 'TOKEN_REVOKED');
+  }
+  if (user.mustChangePassword === true && !allowPasswordChange) {
+    return sendResponse(res, 403, false, 'Change your password before continuing', null, 'PASSWORD_CHANGE_REQUIRED');
+  }
+  req.user = user;
+  req.authToken = match[1];
+  return next();
 };
+
+const protect = (req, res, next) => authenticate(req, res, next, false);
+// Mount only on the exact POST change-password route, never on a user-supplied URL check.
+const protectPasswordChange = (req, res, next) => authenticate(req, res, next, true);
 
 const financeOnly = (req, res, next) => {
   if (!req.user) {
@@ -53,8 +72,11 @@ const blockSales = (req, res, next) => {
     return res.status(401).json({ message: 'Not authorized' });
   }
 
-  const isSales = req.user.role !== 'Admin' &&
-    req.user.departments && req.user.departments.some(d => d.name === 'Sales');
+  const roles = Array.isArray(req.user.roles) ? req.user.roles : [];
+  const isSales = !roles.includes('ceo_bd') && (
+    roles.includes('sales') ||
+    (req.user.departments && req.user.departments.some(d => d.name === 'Sales'))
+  );
 
   if (isSales) {
     return res.status(403).json({ success: false, message: 'Forbidden: Projects are not available to the Sales department' });
@@ -82,4 +104,4 @@ const cronAuth = (req, res, next) => {
   return next();
 };
 
-module.exports = { protect, financeOnly, blockSales, cronAuth };
+module.exports = { protect, protectPasswordChange, financeOnly, blockSales, cronAuth };

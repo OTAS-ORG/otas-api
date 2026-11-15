@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const salaryController = require('../controllers/salaryController');
-const { protect, financeOnly } = require('../middleware/authMiddleware');
+const { protect } = require('../middleware/authMiddleware');
+const authorize = require('../middleware/authorize');
 
 router.use(protect);
-router.use(financeOnly);
+router.use(authorize('access', 'LegacyFinance'));
 
 router.get('/summary', salaryController.getSalarySummary);
 router.get('/unreimbursed-expenses/:userId', salaryController.getUnreimbursedExpenses);

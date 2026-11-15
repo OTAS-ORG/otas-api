@@ -1,6 +1,7 @@
 const PasswordVault = require('../models/PasswordVault');
 const sendResponse = require('../utils/response');
 const { encrypt, decrypt } = require('../utils/encryption');
+const { verifyPin, sendPinFailure } = require('../services/vaultPinService');
 
 exports.getPasswords = async (req, res) => {
   try {
@@ -18,6 +19,7 @@ exports.getPasswords = async (req, res) => {
     }
 
     const passwords = await PasswordVault.find(query)
+      .select('-encryptedPassword -iv -authTag')
       .populate('clientId', 'companyName contactPerson')
       .populate('createdBy', 'username')
       .sort({ updatedAt: -1 });
@@ -32,6 +34,7 @@ exports.getPasswords = async (req, res) => {
 exports.getPasswordById = async (req, res) => {
   try {
     const password = await PasswordVault.findById(req.params.id)
+      .select('-encryptedPassword -iv -authTag')
       .populate('clientId', 'companyName contactPerson')
       .populate('createdBy', 'username');
 
@@ -70,6 +73,7 @@ exports.createPassword = async (req, res) => {
     });
 
     const populated = await PasswordVault.findById(newEntry._id)
+      .select('-encryptedPassword -iv -authTag')
       .populate('clientId', 'companyName contactPerson')
       .populate('createdBy', 'username');
 
@@ -105,6 +109,7 @@ exports.updatePassword = async (req, res) => {
     await entry.save();
 
     const populated = await PasswordVault.findById(entry._id)
+      .select('-encryptedPassword -iv -authTag')
       .populate('clientId', 'companyName contactPerson')
       .populate('createdBy', 'username');
 
@@ -131,6 +136,9 @@ exports.deletePassword = async (req, res) => {
 
 exports.decryptPassword = async (req, res) => {
   try {
+    const { pin } = req.body || {};
+    const result = await verifyPin(req.user._id, pin);
+    if (result !== 'valid') return sendPinFailure(res, result);
     const entry = await PasswordVault.findById(req.params.id);
     if (!entry) {
       return sendResponse(res, 404, false, 'Password entry not found');

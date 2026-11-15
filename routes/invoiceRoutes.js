@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const invoiceController = require('../controllers/invoiceController');
-const { protect, financeOnly } = require('../middleware/authMiddleware');
+const { protect } = require('../middleware/authMiddleware');
+const authorize = require('../middleware/authorize');
 
 router.use(protect);
-router.use(financeOnly);
+router.use(authorize('access', 'LegacyFinance'));
 
 router.get('/', invoiceController.getInvoices);
 router.get('/:id', invoiceController.getInvoiceById);

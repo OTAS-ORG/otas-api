@@ -1,52 +1,97 @@
 const User = require('../models/User');
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const sendResponse = require('../utils/response');
-const { getJwtSecret } = require('../utils/jwtSecret');
-
-const generateToken = (id) => {
-  return jwt.sign({ id }, getJwtSecret(), {
-    expiresIn: '30d',
-  });
-};
+const { generateToken, serializeSession, isTokenVersion } = require('../utils/authSession');
+const { verifyPin, sendPinFailure } = require('../services/vaultPinService');
 
 exports.login = async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password } = req.body || {};
+    if (typeof username !== 'string' || !username.trim() || typeof password !== 'string' || !password) {
+      return sendResponse(res, 400, false, 'Username and password are required', null, 'INVALID_CREDENTIALS');
+    }
+    if (username.toLowerCase() === 'system') {
+      return sendResponse(res, 401, false, 'Invalid username or password', null, 'INVALID_CREDENTIALS');
+    }
 
-    const user = await User.findOne({ username }).populate('departments', 'name');
+    const user = await User.findOne({ username })
+      .select('_id username fullName roles active tokenVersion mustChangePassword password');
 
     if (user && (await user.matchPassword(password))) {
-      const userData = {
-        _id: user._id,
-        username: user.username,
-        fullName: user.fullName || '',
-        role: user.role,
-        departments: user.departments ? user.departments.map(d => d.name) : [],
-        employeeId: user.employeeId || '',
-        position: user.position || '',
-        dateOfJoining: user.dateOfJoining || null,
-        department: user.department || '',
-        baseSalary: user.baseSalary || 0,
-        fullDayDeduction: user.fullDayDeduction || 0,
-        halfDayDeduction: user.halfDayDeduction || 0,
-        token: generateToken(user._id),
-      };
-      sendResponse(res, 200, true, 'Login successful', userData);
+      if (user.active !== true) {
+        return sendResponse(res, 401, false, 'Account is disabled', null, 'USER_DISABLED');
+      }
+      return sendResponse(res, 200, true, 'Login successful', serializeSession(user, generateToken(user)));
     } else {
-      sendResponse(res, 401, false, 'Invalid username or password');
+      return sendResponse(res, 401, false, 'Invalid username or password', null, 'INVALID_CREDENTIALS');
     }
   } catch (error) {
-    console.error('Error in login:', error);
-    sendResponse(res, 500, false, error.message);
+    console.error('Error in login:', error.name);
+    return sendResponse(res, 500, false, 'Login is unavailable', null, 'AUTH_UNAVAILABLE');
+  }
+};
+
+exports.me = async (req, res) => {
+  try {
+    return sendResponse(res, 200, true, 'Current user retrieved', serializeSession(req.user, req.authToken));
+  } catch (error) {
+    console.error('Error in me:', error.name);
+    return sendResponse(res, 500, false, 'Current user is unavailable', null, 'AUTH_UNAVAILABLE');
+  }
+};
+
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (typeof currentPassword !== 'string' || !currentPassword ||
+        typeof newPassword !== 'string' || !newPassword.trim() || Buffer.byteLength(newPassword, 'utf8') > 72) {
+      return sendResponse(res, 400, false, 'Current password and a new password of at most 72 UTF-8 bytes are required', null, 'INVALID_PASSWORD');
+    }
+    const user = await User.findById(req.user._id)
+      .select('_id username fullName roles active tokenVersion mustChangePassword password');
+    if (!user || user.active !== true) {
+      return sendResponse(res, 401, false, 'Account is disabled or unavailable', null, 'USER_DISABLED');
+    }
+    if (!isTokenVersion(user.tokenVersion) || user.tokenVersion !== req.user.tokenVersion) {
+      return sendResponse(res, 401, false, 'Session has been revoked', null, 'TOKEN_REVOKED');
+    }
+    if (!(await user.matchPassword(currentPassword))) {
+      return sendResponse(res, 400, false, 'Current password is incorrect', null, 'INVALID_CURRENT_PASSWORD');
+    }
+    if (await user.matchPassword(newPassword)) {
+      return sendResponse(res, 400, false, 'New password must differ from the current password', null, 'PASSWORD_UNCHANGED');
+    }
+    if (!isTokenVersion(user.tokenVersion + 1)) {
+      return sendResponse(res, 409, false, 'Account session version cannot be advanced', null, 'TOKEN_REVOKED');
+    }
+    // Query updates do not run the User pre-save password hook: hash explicitly once.
+    const password = await bcrypt.hash(newPassword, 10);
+    const versionMatch = user.tokenVersion === 0
+      ? { $or: [{ tokenVersion: 0 }, { tokenVersion: { $exists: false } }] }
+      : { tokenVersion: user.tokenVersion };
+    const updated = await User.findOneAndUpdate({
+      _id: user._id, password: user.password,
+      $and: [versionMatch, { $or: [{ active: true }, { active: { $exists: false } }] }],
+    }, {
+      $set: { password, tokenVersion: user.tokenVersion + 1, mustChangePassword: false },
+    }, { new: true, runValidators: true })
+      .select('_id username fullName roles active tokenVersion mustChangePassword');
+    if (!updated) {
+      return sendResponse(res, 401, false, 'Account changed; sign in again', null, 'TOKEN_REVOKED');
+    }
+    return sendResponse(res, 200, true, 'Password changed', serializeSession(updated, generateToken(updated)));
+  } catch (error) {
+    console.error('Error in changePassword:', error.name);
+    return sendResponse(res, 500, false, 'Password change is unavailable', null, 'AUTH_UNAVAILABLE');
   }
 };
 
 exports.setVaultPin = async (req, res) => {
   try {
-    const { pin, currentPassword } = req.body;
+    const { pin, currentPassword } = req.body || {};
 
-    if (!pin || pin.length < 4) {
+    if (typeof pin !== 'string' || pin.length < 4 || Buffer.byteLength(pin, 'utf8') > 72 ||
+        typeof currentPassword !== 'string' || !currentPassword) {
       return sendResponse(res, 400, false, 'PIN must be at least 4 characters');
     }
 
@@ -55,14 +100,14 @@ exports.setVaultPin = async (req, res) => {
       return sendResponse(res, 404, false, 'User not found');
     }
 
-    if (user.vaultPin) {
-      if (!(await user.matchPassword(currentPassword))) {
-        return sendResponse(res, 401, false, 'Current password is incorrect');
-      }
+    if (!(await user.matchPassword(currentPassword))) {
+      return sendResponse(res, 403, false, 'Current password is incorrect', null, 'INVALID_CURRENT_PASSWORD');
     }
 
     const salt = await bcrypt.genSalt(10);
     user.vaultPin = await bcrypt.hash(pin, salt);
+    user.vaultPinAttempts = 0;
+    user.vaultPinLockedUntil = null;
     await user.save();
 
     sendResponse(res, 200, true, 'Vault PIN set successfully');
@@ -125,10 +170,8 @@ exports.verifyVaultPin = async (req, res) => {
       return sendResponse(res, 400, false, 'PIN is required');
     }
 
-    const isValid = await bcrypt.compare(pin, user.vaultPin);
-    if (!isValid) {
-      return sendResponse(res, 401, false, 'Incorrect vault PIN');
-    }
+    const result = await verifyPin(req.user._id, pin);
+    if (result !== 'valid') return sendPinFailure(res, result);
 
     sendResponse(res, 200, true, 'PIN verified');
   } catch (error) {

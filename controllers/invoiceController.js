@@ -1,45 +1,9 @@
-const Invoice = require('../models/Invoice');
-const Client = require('../models/Client');
-const AuditLog = require('../models/AuditLog');
 const sendResponse = require('../utils/response');
+const invoiceReads = require('../repositories/invoiceReads');
+const invoiceWrites = require('../repositories/invoiceWrites');
+const { AppError } = require('../utils/appError');
 
-const generateInvoiceNumber = async (type, serviceType) => {
-  const now = new Date();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const yy = String(now.getFullYear()).slice(-2);
-  const datePart = `${yy}${mm}`;
-
-  let prefix = '';
-  let query = {};
-  if (type === 'service_fee' && serviceType) {
-    prefix = { server: 'SVF', domain: 'DMF', maintenance: 'MTF' }[serviceType] || 'SRV';
-    query = { type: 'service_fee', serviceType };
-  } else {
-    query = { type: { $ne: 'service_fee' } };
-  }
-
-  const lastInvoice = await Invoice.findOne().sort({ createdAt: -1 }).select('invoiceNumber');
-  let counter = 1;
-  if (lastInvoice && lastInvoice.invoiceNumber) {
-    const lastNum = lastInvoice.invoiceNumber.slice(-4);
-    const lastCounter = parseInt(lastNum, 10);
-    if (!isNaN(lastCounter)) {
-      counter = lastCounter + 1;
-    }
-  }
-  return `INV-${prefix}${prefix ? '-' : ''}${datePart}${String(counter).padStart(4, '0')}`;
-};
-
-const createAudit = async (invoiceId, action, details, user) => {
-  await AuditLog.create({
-    clientId: invoiceId,
-    action,
-    details,
-    user: user || 'Core Team'
-  });
-};
-
-exports.getInvoices = async (req, res) => {
+exports.getInvoices = async (req, res, next) => {
   try {
     const { search, status, type } = req.query;
     let query = {};
@@ -55,201 +19,52 @@ exports.getInvoices = async (req, res) => {
       ];
     }
 
-    const invoices = await Invoice.find(query).sort({ createdAt: -1 });
+    const invoices = await invoiceReads.listInvoices(req.user, query);
     sendResponse(res, 200, true, 'Invoices retrieved successfully', invoices);
   } catch (error) {
-    console.error('Error in getInvoices:', error);
-    sendResponse(res, 500, false, error.message);
+    return next(error);
   }
 };
 
-exports.getInvoiceById = async (req, res) => {
+exports.getInvoiceById = async (req, res, next) => {
   try {
-    const invoice = await Invoice.findById(req.params.id).populate('clientId', 'companyName contactPerson');
+    const invoice = await invoiceReads.getInvoice(req.user, req.params.id);
     if (!invoice) return sendResponse(res, 404, false, 'Invoice not found');
 
     sendResponse(res, 200, true, 'Invoice retrieved successfully', invoice);
   } catch (error) {
-    console.error('Error in getInvoiceById:', error);
-    sendResponse(res, 500, false, error.message);
+    return next(error);
   }
 };
 
-exports.createInvoice = async (req, res) => {
+exports.createInvoice = async (req, res, next) => {
   try {
-    const invoiceNumber = await generateInvoiceNumber(req.body.type, req.body.serviceType);
-    const invoiceData = { ...req.body, invoiceNumber };
-    if (req.user) invoiceData.createdBy = req.user._id;
-
-    // Auto-calculate platform fee
-    if (invoiceData.amount && invoiceData.platformFeeRate) {
-      invoiceData.platformFee = Math.round(invoiceData.amount * (invoiceData.platformFeeRate / 100));
-    }
-
-    // Auto-calculate item amounts
-    if (invoiceData.items) {
-      invoiceData.items = invoiceData.items.map(item => ({
-        ...item,
-        amount: item.amount || (item.quantity || 1) * (item.unitPrice || 0)
-      }));
-    }
-
-    const invoice = new Invoice(invoiceData);
-    const savedInvoice = await invoice.save();
-
-    await createAudit(savedInvoice._id, 'CREATE', { invoiceNumber: savedInvoice.invoiceNumber }, req.user?.username);
-
+    const savedInvoice = await invoiceWrites.createInvoice(req.user, req.body);
     sendResponse(res, 201, true, 'Invoice created successfully', savedInvoice);
   } catch (error) {
-    console.error('Error in createInvoice:', error);
-    sendResponse(res, 400, false, error.message);
+    if (error instanceof AppError) return next(error);
+    if (error.name === 'ValidationError' || error.name === 'CastError') return sendResponse(res, 400, false, 'Invalid invoice data');
+    return next(error);
   }
 };
 
-exports.updateInvoice = async (req, res) => {
+const handleMutation = (operation, successMessage) => async (req, res, next) => {
   try {
-    const invoice = await Invoice.findById(req.params.id);
-    if (!invoice) return sendResponse(res, 404, false, 'Invoice not found');
-
-    if (invoice.isLocked) return sendResponse(res, 403, false, 'Invoice is locked and cannot be edited');
-
-    const updateData = { ...req.body };
-
-    // Recalculate platform fee
-    if (updateData.amount !== undefined && updateData.platformFeeRate !== undefined) {
-      updateData.platformFee = Math.round(updateData.amount * (updateData.platformFeeRate / 100));
-    } else if (updateData.amount !== undefined && invoice.platformFeeRate) {
-      updateData.platformFee = Math.round(updateData.amount * (invoice.platformFeeRate / 100));
-    }
-
-    // Recalculate item amounts
-    if (updateData.items) {
-      updateData.items = updateData.items.map(item => ({
-        ...item,
-        amount: item.amount || (item.quantity || 1) * (item.unitPrice || 0)
-      }));
-    }
-
-    Object.assign(invoice, updateData);
-    const updatedInvoice = await invoice.save();
-
-    await createAudit(updatedInvoice._id, 'UPDATE', { changes: updateData }, req.user?.username);
-
-    sendResponse(res, 200, true, 'Invoice updated successfully', updatedInvoice);
+    const result = await invoiceWrites.mutateInvoice(req.user, req.params.id, operation, req.body);
+    if (result.status === 'missing') return sendResponse(res, 404, false, 'Invoice not found');
+    if (result.status === 'locked') return sendResponse(res, 403, false, 'Invoice is locked and cannot be changed');
+    return sendResponse(res, 200, true, successMessage, operation === 'delete' ? undefined : result.invoice);
   } catch (error) {
-    console.error('Error in updateInvoice:', error);
-    sendResponse(res, 400, false, error.message);
+    if (error instanceof AppError) return next(error);
+    if (error.name === 'ValidationError' || error.name === 'CastError') return sendResponse(res, 400, false, 'Invalid invoice data');
+    return next(error);
   }
 };
 
-exports.updateStatus = async (req, res) => {
-  try {
-    const invoice = await Invoice.findById(req.params.id);
-    if (!invoice) return sendResponse(res, 404, false, 'Invoice not found');
-
-    const { status, paymentStatus, payoutStatus } = req.body;
-    const changes = {};
-
-    if (status) { invoice.status = status; changes.status = status; }
-    if (paymentStatus) { invoice.paymentStatus = paymentStatus; changes.paymentStatus = paymentStatus; }
-    if (payoutStatus) { invoice.payoutStatus = payoutStatus; changes.payoutStatus = payoutStatus; }
-
-    const updatedInvoice = await invoice.save();
-    await createAudit(updatedInvoice._id, 'STATUS_CHANGE', changes, req.user?.username);
-
-    sendResponse(res, 200, true, 'Invoice status updated', updatedInvoice);
-  } catch (error) {
-    console.error('Error in updateStatus:', error);
-    sendResponse(res, 400, false, error.message);
-  }
-};
-
-exports.confirmPayment = async (req, res) => {
-  try {
-    const invoice = await Invoice.findById(req.params.id);
-    if (!invoice) return sendResponse(res, 404, false, 'Invoice not found');
-
-    const { channel, amount, senderName, dateTime, note } = req.body;
-
-    invoice.paymentStatus = 'Received';
-    invoice.status = 'Paid';
-    invoice.paymentDetails = { channel, amount, senderName, dateTime, note };
-
-    const updatedInvoice = await invoice.save();
-    await createAudit(updatedInvoice._id, 'PAYMENT_RECEIVED', { channel, amount, senderName }, req.user?.username);
-
-    sendResponse(res, 200, true, 'Payment confirmed successfully', updatedInvoice);
-  } catch (error) {
-    console.error('Error in confirmPayment:', error);
-    sendResponse(res, 400, false, error.message);
-  }
-};
-
-exports.confirmPayout = async (req, res) => {
-  try {
-    const invoice = await Invoice.findById(req.params.id);
-    if (!invoice) return sendResponse(res, 404, false, 'Invoice not found');
-
-    const { channel, amount, receiverName, dateTime, note } = req.body;
-
-    invoice.payoutStatus = 'Paid';
-    invoice.payoutDetails = { channel, amount, receiverName, dateTime, note };
-
-    const updatedInvoice = await invoice.save();
-    await createAudit(updatedInvoice._id, 'PAYOUT_COMPLETED', { channel, amount, receiverName }, req.user?.username);
-
-    sendResponse(res, 200, true, 'Payout confirmed successfully', updatedInvoice);
-  } catch (error) {
-    console.error('Error in confirmPayout:', error);
-    sendResponse(res, 400, false, error.message);
-  }
-};
-
-exports.lockInvoice = async (req, res) => {
-  try {
-    const invoice = await Invoice.findById(req.params.id);
-    if (!invoice) return sendResponse(res, 404, false, 'Invoice not found');
-
-    invoice.isLocked = true;
-    invoice.status = 'Paid';
-    const updatedInvoice = await invoice.save();
-
-    await createAudit(updatedInvoice._id, 'LOCKED', { message: 'Invoice locked' }, req.user?.username);
-
-    sendResponse(res, 200, true, 'Invoice locked successfully', updatedInvoice);
-  } catch (error) {
-    console.error('Error in lockInvoice:', error);
-    sendResponse(res, 400, false, error.message);
-  }
-};
-
-exports.unlockInvoice = async (req, res) => {
-  try {
-    const invoice = await Invoice.findById(req.params.id);
-    if (!invoice) return sendResponse(res, 404, false, 'Invoice not found');
-
-    invoice.isLocked = false;
-    const updatedInvoice = await invoice.save();
-
-    await createAudit(updatedInvoice._id, 'UNLOCKED', { message: 'Invoice unlocked' }, req.user?.username);
-
-    sendResponse(res, 200, true, 'Invoice unlocked successfully', updatedInvoice);
-  } catch (error) {
-    console.error('Error in unlockInvoice:', error);
-    sendResponse(res, 400, false, error.message);
-  }
-};
-
-exports.deleteInvoice = async (req, res) => {
-  try {
-    const invoice = await Invoice.findByIdAndDelete(req.params.id);
-    if (!invoice) return sendResponse(res, 404, false, 'Invoice not found');
-
-    await AuditLog.deleteMany({ clientId: req.params.id });
-
-    sendResponse(res, 200, true, 'Invoice deleted successfully');
-  } catch (error) {
-    console.error('Error in deleteInvoice:', error);
-    sendResponse(res, 500, false, error.message);
-  }
-};
+exports.updateInvoice = handleMutation('edit', 'Invoice updated successfully');
+exports.updateStatus = handleMutation('status', 'Invoice status updated');
+exports.confirmPayment = handleMutation('payment', 'Payment confirmed successfully');
+exports.confirmPayout = handleMutation('payout', 'Payout confirmed successfully');
+exports.lockInvoice = handleMutation('lock', 'Invoice locked successfully');
+exports.unlockInvoice = handleMutation('unlock', 'Invoice unlocked successfully');
+exports.deleteInvoice = handleMutation('delete', 'Invoice deleted successfully');
