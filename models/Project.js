@@ -5,6 +5,8 @@ const projectSchema = new mongoose.Schema({
   description: { type: String, default: '' },
   projectKey: { type: String, required: true, unique: true, uppercase: true, trim: true },
   clientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', default: null },
+  // Maps to the documented projects.sales_owner_id; null means unassigned.
+  salesOwner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   projectType: { type: String, enum: ['package', 'custom', null], default: null },
   owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   supportingOwner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
@@ -13,5 +15,6 @@ const projectSchema = new mongoose.Schema({
 
 projectSchema.index({ owner: 1 });
 projectSchema.index({ clientId: 1 });
+projectSchema.index({ salesOwner: 1 });
 
 module.exports = mongoose.model('Project', projectSchema);

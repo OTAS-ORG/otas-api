@@ -1,24 +1,19 @@
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
 const projectController = require('../controllers/projectController');
-const { protect, blockSales } = require('../middleware/authMiddleware');
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024 } // 15MB
-});
+const { protect } = require('../middleware/authMiddleware');
+const { requireTaskRead, requireCeo, noHardDelete, prepareTaskWrite } = require('../middleware/taskAccess');
 
 router.use(protect);
-router.use(blockSales);
-
-router.post('/upload', upload.single('file'), projectController.uploadTaskAttachment);
-router.get('/:taskId', projectController.getTask);
-router.patch('/:taskId/status', projectController.updateTaskStatus);
-router.put('/:taskId', projectController.updateTask);
-router.delete('/:taskId', projectController.deleteTask);
-router.get('/:taskId/comments', projectController.getComments);
-router.post('/:taskId/comments', projectController.addComment);
-router.post('/:taskId/comments/:commentId/reactions', projectController.toggleTaskCommentReaction);
+// Upload lacks a task ID and therefore cannot be authorized against a record.
+router.post('/upload', noHardDelete);
+router.get('/:taskId', requireTaskRead, projectController.getTask);
+router.patch('/:taskId/status', prepareTaskWrite, projectController.updateTaskStatus);
+router.put('/:taskId', prepareTaskWrite, projectController.updateTask);
+router.delete('/:taskId', noHardDelete);
+// Legacy comments contain unclassified free text and are temporarily CEO-only.
+router.get('/:taskId/comments', requireCeo, projectController.getComments);
+router.post('/:taskId/comments', requireCeo, projectController.addComment);
+router.post('/:taskId/comments/:commentId/reactions', requireCeo, projectController.toggleTaskCommentReaction);
 
 module.exports = router;

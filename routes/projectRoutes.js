@@ -1,15 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const projectController = require('../controllers/projectController');
-const { protect, blockSales } = require('../middleware/authMiddleware');
+const projectUpdateController = require('../controllers/projectUpdateController');
+const { protect } = require('../middleware/authMiddleware');
+const { requireTaskRead } = require('../middleware/taskAccess');
 
 router.use(protect);
-router.use(blockSales);
 
 router.get('/', projectController.getProjects);
 router.post('/', projectController.createProject);
 router.get('/:id', projectController.getProject);
-router.get('/:projectId/tasks', projectController.getTasks);
-router.post('/:projectId/tasks', projectController.createTask);
+router.put('/:id', projectUpdateController.updateProject);
+router.get('/:projectId/tasks', requireTaskRead, projectController.getTasks);
+router.post('/:projectId/tasks', requireTaskRead, projectController.createTask);
 
 module.exports = router;

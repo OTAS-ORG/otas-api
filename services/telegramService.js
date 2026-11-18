@@ -1,7 +1,5 @@
 const { TelegramBot } = require('node-telegram-bot-api');
 const Ticket = require('../models/Ticket');
-const Task = require('../models/Task');
-const Project = require('../models/Project');
 const User = require('../models/User');
 
 const crypto = require('crypto');
@@ -253,73 +251,8 @@ const checkAndSendDueReminders = async () => {
 /**
  * Send task assignment notification to both developer and QA via Telegram.
  */
-const notifyTaskAssigned = async (taskId) => {
-  if (!bot) return;
-
-  try {
-    const task = await Task.findById(taskId)
-      .populate('assignedTo', 'username')
-      .populate('qaAssignedTo', 'username');
-
-    if (!task) {
-      console.log('Telegram notify: task not found');
-      return;
-    }
-
-    const project = await Project.findById(task.projectId);
-    const projectName = project?.name || 'Unknown';
-    const statusLabels = { backlog: 'Backlog', todo: 'To Do', 'in-progress': 'In Progress', 'code-review': 'Code Review', 'qa-testing': 'QA Testing', done: 'Done' };
-    const priorityLabels = { urgent: 'Urgent', high: 'High', normal: 'Normal', low: 'Low' };
-
-    const devButtons = ['todo', 'in-progress', 'code-review', 'done'];
-    const qaButtons = ['qa-testing', 'backlog', 'done'];
-
-    const getButtonsForRole = (role, currentStatus) => {
-      const statuses = role === 'QA' ? qaButtons : devButtons;
-      const buttons = [];
-      for (const s of statuses) {
-        if (currentStatus !== s) {
-          buttons.push({ text: `🟢 ${statusLabels[s]}`, callback_data: `task:${taskId}:${s}` });
-        }
-      }
-      return buttons;
-    };
-
-    const sendToUser = async (user, role) => {
-      if (!user) return;
-      const userData = await User.findById(user._id);
-      if (!userData?.telegramChatId) {
-        console.log(`Telegram: No linked chat for ${user.username} (${role}).`);
-        return;
-      }
-
-      const roleButtons = getButtonsForRole(role, task.status);
-
-      const message = [
-        `🎫 *New Task Assigned (${role})*`,
-        '',
-        `*Project:* ${projectName}`,
-        `*Task:* ${task.title}`,
-        `*Priority:* ${priorityLabels[task.priority] || task.priority}`,
-        `*Status:* ${statusLabels[task.status] || task.status}`,
-        `*Assigned to:* ${task.assignedTo?.username || 'Unassigned'}`,
-        task.qaAssignedTo ? `*QA:* ${task.qaAssignedTo.username}` : null,
-        task.due_date ? `*Due:* ${new Date(task.due_date).toLocaleDateString()}` : null,
-      ].filter(Boolean).join('\n');
-
-      await bot.sendMessage(userData.telegramChatId, message, {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [roleButtons] },
-      });
-      console.log(`Telegram task notification sent to ${user.username} (${role}) for: ${task.title}`);
-    };
-
-    await sendToUser(task.assignedTo, 'Developer');
-    await sendToUser(task.qaAssignedTo, 'QA');
-  } catch (error) {
-    console.error('Failed to send task Telegram notification:', error.message);
-  }
-};
+// Disabled until task text is classified and recipient authorization is enforced.
+const notifyTaskAssigned = async () => {};
 
 /**
  * Process a ticket callback query (called directly from webhook route, awaited).
@@ -417,72 +350,8 @@ const processTicketCallback = async (query, botInstance) => {
 /**
  * Process a task callback query (called directly from webhook route, awaited).
  */
-const processTaskCallback = async (query, botInstance) => {
-  const { data, message } = query;
-  if (!data) return;
-
-  const parts = data.split(':');
-  if (parts.length !== 3) return;
-
-  const taskId = parts[1];
-  const newStatus = parts[2];
-
-  try {
-    const task = await Task.findByIdAndUpdate(
-      taskId,
-      { status: newStatus },
-      { returnDocument: 'after' }
-    )
-      .populate('assignedTo', 'username');
-
-    if (!task) {
-      await botInstance.answerCallbackQuery(query.id, { text: '❌ Task not found' });
-      return;
-    }
-
-    const project = await Project.findById(task.projectId);
-    const projectName = project?.name || 'Unknown';
-    const assignedName = task.assignedTo?.username || 'Unassigned';
-    const priorityLabels = { urgent: 'Urgent', high: 'High', normal: 'Normal', low: 'Low' };
-    const statusLabels = { backlog: 'Backlog', todo: 'To Do', 'in-progress': 'In Progress', 'code-review': 'Code Review', 'qa-testing': 'QA Testing', done: 'Done' };
-
-    const updatedMessage = [
-      '🎫 *Task Updated*',
-      '',
-      `*Project:* ${projectName}`,
-      `*Task:* ${task.title}`,
-      `*Priority:* ${priorityLabels[task.priority] || task.priority}`,
-      `*Status:* ${statusLabels[newStatus] || newStatus} ✅`,
-      `*Assigned to:* ${assignedName}`,
-      task.due_date ? `*Due:* ${new Date(task.due_date).toLocaleDateString()}` : null,
-    ].filter(Boolean).join('\n');
-
-    const devStatuses = ['todo', 'in-progress', 'code-review', 'done'];
-    const qaStatuses = ['qa-testing', 'backlog', 'done'];
-    const qaOwned = ['code-review', 'qa-testing'];
-    const nextRoleStatuses = qaOwned.includes(newStatus) ? qaStatuses : devStatuses;
-
-    const buttons = [];
-    for (const s of nextRoleStatuses) {
-      if (newStatus !== s) {
-        buttons.push({ text: `🟢 ${statusLabels[s]}`, callback_data: `task:${taskId}:${s}` });
-      }
-    }
-
-    await botInstance.editMessageText(updatedMessage, {
-      chat_id: message.chat.id,
-      message_id: message.message_id,
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: buttons.length > 0 ? [buttons] : [] },
-    });
-
-    await botInstance.answerCallbackQuery(query.id, { text: `✅ Status changed to ${statusLabels[newStatus] || newStatus}` });
-    console.log(`Telegram: Task "${task.title}" (${taskId}) status changed to ${newStatus} by @${query.from.username || query.from.first_name || 'unknown'}`);
-  } catch (error) {
-    console.error('Error handling task callback query:', error);
-    await botInstance.answerCallbackQuery(query.id, { text: '❌ Error updating task' });
-  }
-};
+// Legacy task callbacks are untrusted and cannot update tasks without server authorization.
+const processTaskCallback = async () => {};
 
 /**
  * Send ticket comment notification to relevant parties.

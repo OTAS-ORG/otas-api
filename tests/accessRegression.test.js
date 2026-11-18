@@ -28,16 +28,6 @@ const vaultRequests = [
   ['get', '/passwords'], ['get', '/passwords/fictional'], ['post', '/passwords'],
   ['put', '/passwords/fictional'], ['delete', '/passwords/fictional'], ['post', '/passwords/fictional/decrypt'],
 ];
-const projectRequests = [
-  ['get', '/projects'], ['post', '/projects'], ['get', '/projects/fictional'],
-  ['get', '/projects/fictional/tasks'], ['post', '/projects/fictional/tasks'],
-  ['get', '/plans/widget/summary'], ['get', '/plans/fictional'], ['put', '/plans/fictional/charter'],
-  ['get', '/plans/fictional/milestones'], ['post', '/plans/fictional/milestones'],
-  ['put', '/plans/fictional/milestones/entry'], ['delete', '/plans/fictional/milestones/entry'],
-  ['post', '/tasks/upload'], ['get', '/tasks/fictional'], ['patch', '/tasks/fictional/status'],
-  ['put', '/tasks/fictional'], ['delete', '/tasks/fictional'], ['get', '/tasks/fictional/comments'],
-  ['post', '/tasks/fictional/comments'], ['post', '/tasks/fictional/comments/entry/reactions'],
-];
 
 test.each(ROLES)('vault routes are restricted for %s', async (role) => {
   for (const [method, path] of vaultRequests) {
@@ -50,17 +40,15 @@ test('vault endpoints require authentication', async () => {
   for (const [method, path] of vaultRequests) expect((await request(app)[method](path)).status).toBe(401);
 });
 
-test.each(['sales', 'sales,developer', 'sales,finance_admin'])('unscoped project routes deny %s', async (roles) => {
-  for (const [method, path] of projectRequests) {
-    const res = await request(app)[method](path).set('X-Test-Roles', roles);
-    expect(res.status).toBe(403);
-  }
+test('sales-only cannot read tasks while sales plus developer retains developer access', async () => {
+  expect((await request(app).get('/projects/fictional/tasks').set('X-Test-Roles', 'sales')).status).toBe(403);
+  expect((await request(app).get('/projects/fictional/tasks').set('X-Test-Roles', 'sales,developer')).status).toBe(200);
 });
 
 test('CEO keeps project access even when holding sales role', async () => {
   expect((await request(app).get('/projects').set('X-Test-Roles', 'ceo_bd,sales')).status).toBe(200);
 });
 
-test('legacy Sales department users cannot bypass the restriction through Admin role', async () => {
-  expect((await request(app).get('/projects').set('X-Test-Roles', 'developer').set('X-Legacy-Role', 'Admin').set('X-Legacy-Sales', 'yes')).status).toBe(403);
+test('legacy Admin field cannot grant task access to sales-only users', async () => {
+  expect((await request(app).get('/projects/fictional/tasks').set('X-Test-Roles', 'sales').set('X-Legacy-Role', 'Admin').set('X-Legacy-Sales', 'yes')).status).toBe(403);
 });

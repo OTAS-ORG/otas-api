@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const { accessibleBy } = require('@casl/mongoose');
 const Salary = require('../models/Salary');
 const Expense = require('../models/Expense');
+const AuditLog = require('../models/AuditLog');
 const { defineAbilityFor } = require('../permissions/ability');
 const { authorizeCollection, findMany } = require('./guardedRepository');
 const connections = require('../db/connections');
@@ -25,7 +26,8 @@ const context = async (user, action, expenseAction) => {
   if (expenseAction) authorizeCollection({ user, ability, collection: 'expenses', action: expenseAction });
   const connection = await connections.getConnection('finance');
   return { connection, ability, salary: connection.models.Salary || connection.model('Salary', Salary.schema),
-    expense: connection.models.Expense || connection.model('Expense', Expense.schema) };
+    expense: connection.models.Expense || connection.model('Expense', Expense.schema),
+    audit: action === 'read' ? null : (connection.models.AuditLog || connection.model('AuditLog', AuditLog.schema)) };
 };
 const filterFor = (ability, subject, action, filter = {}) => ({ $and: [accessibleBy(ability, action).ofType(subject), filter] });
 const populate = async (user, ability, rows) => {
@@ -44,6 +46,11 @@ const inTransaction = async (connection, fn) => {
   try { let result; await session.withTransaction(async () => { result = await fn(session); }); return result; }
   finally { await session.endSession(); }
 };
+// Record the action and changed field names only; salary values and notes stay private.
+const audit = (ctx, session, user, salary, action, fields = []) => ctx.audit.create([{
+  clientId: salary._id, user: user.username || 'Core Team', action,
+  details: { changedFields: fields },
+}], { session });
 const list = async (user, query = {}) => {
   const ctx = await context(user, 'read');
   const { search, status, department, month, year } = query;
@@ -109,6 +116,7 @@ const create = async (user, data) => {
     const salary = new ctx.salary({ ...fields, createdBy: user._id });
     await attachExpenses(ctx, salary, attached, session);
     await salary.save({ session });
+    await audit(ctx, session, user, salary, 'PAYROLL_CREATED');
     return (await populate(user, ctx.ability, [salary]))[0];
   });
 };
@@ -116,6 +124,7 @@ const update = async (user, id, data) => {
   const ctx = await context(user, 'update', 'update');
   if (!mongoose.isObjectIdOrHexString(id)) return null;
   const fields = pick(data);
+  const changedFields = Object.keys(fields);
   return inTransaction(ctx.connection, async session => {
     const salary = await ctx.salary.findOne(filterFor(ctx.ability, 'Salary', 'update', { _id: id })).session(session);
     if (!salary) return null;
@@ -124,6 +133,7 @@ const update = async (user, id, data) => {
     salary.set(fields);
     await attachExpenses(ctx, salary, attached, session);
     await salary.save({ session });
+    await audit(ctx, session, user, salary, 'PAYROLL_UPDATED', changedFields);
     return (await populate(user, ctx.ability, [salary]))[0];
   });
 };
@@ -135,6 +145,7 @@ const remove = async (user, id) => {
     if (!salary) return false;
     await ctx.expense.updateMany(filterFor(ctx.ability, 'Expense', 'update', { salaryId: salary._id }), { $set: { isReimbursedViaPayroll: false, salaryId: null, reimbursedAt: null } }, { session });
     await salary.deleteOne({ session });
+    await audit(ctx, session, user, salary, 'PAYROLL_DELETED');
     return true;
   });
 };

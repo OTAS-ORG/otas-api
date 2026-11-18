@@ -1,6 +1,7 @@
 const Project = require('../models/Project');
 const ProjectPlan = require('../models/ProjectPlan');
 const ProjectMilestone = require('../models/ProjectMilestone');
+const mongoose = require('mongoose');
 const sendResponse = require('../utils/response');
 
 // GET /api/project-plans/:projectId
@@ -14,21 +15,9 @@ exports.getProjectPlan = async (req, res) => {
       return sendResponse(res, 404, false, 'Project not found');
     }
 
-    let plan = await ProjectPlan.findOne({ projectId })
+    const plan = await ProjectPlan.findOne({ projectId })
       .populate('projectId', 'name projectKey description')
       .populate('updatedBy', 'username');
-
-    if (!plan) {
-      // Auto-initialize an empty plan for convenient first-time usage
-      plan = await ProjectPlan.create({
-        projectId,
-        charterContent: `<h2>🎯 Project Goals & Scope</h2><p>Outline project objectives, target deliverables, and scope boundaries here...</p><h2>⚠️ Risks & Mitigation Strategy</h2><p>Document key technical, operational, and delivery risks...</p>`,
-        updatedBy: req.user._id,
-      });
-      plan = await ProjectPlan.findById(plan._id)
-        .populate('projectId', 'name projectKey description')
-        .populate('updatedBy', 'username');
-    }
 
     const milestones = await ProjectMilestone.find({ project_id: projectId })
       .sort({ start_date: 1, createdAt: 1 })
@@ -138,10 +127,11 @@ exports.createMilestone = async (req, res) => {
 // Update an existing milestone
 exports.updateMilestone = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id, projectId } = req.params;
+    if (!mongoose.isObjectIdOrHexString(id) || !mongoose.isObjectIdOrHexString(projectId)) return sendResponse(res, 404, false, 'Milestone not found');
     const { phase_name, start_date, end_date, release_version, status, notes, sort_order } = req.body;
 
-    const milestone = await ProjectMilestone.findById(id);
+    const milestone = await ProjectMilestone.findOne({ _id: id, project_id: projectId });
     if (!milestone) {
       return sendResponse(res, 404, false, 'Milestone not found');
     }
@@ -154,9 +144,10 @@ exports.updateMilestone = async (req, res) => {
     if (notes !== undefined) milestone.notes = notes.trim();
     if (sort_order !== undefined) milestone.sort_order = Number(sort_order) || 0;
 
+    milestone.$where = { project_id: new mongoose.Types.ObjectId(projectId) };
     await milestone.save();
 
-    const populated = await ProjectMilestone.findById(id).populate('createdBy', 'username');
+    const populated = await ProjectMilestone.findOne({ _id: id, project_id: projectId }).populate('createdBy', 'username');
     sendResponse(res, 200, true, 'Milestone updated successfully', populated);
   } catch (error) {
     console.error('Error in updateMilestone:', error);
@@ -168,8 +159,8 @@ exports.updateMilestone = async (req, res) => {
 // Delete a milestone
 exports.deleteMilestone = async (req, res) => {
   try {
-    const { id } = req.params;
-    const milestone = await ProjectMilestone.findByIdAndDelete(id);
+    const { id, projectId } = req.params;
+    const milestone = await ProjectMilestone.findOneAndDelete({ _id: id, project_id: projectId });
     if (!milestone) {
       return sendResponse(res, 404, false, 'Milestone not found');
     }
