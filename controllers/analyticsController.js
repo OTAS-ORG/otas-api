@@ -9,10 +9,20 @@ const sendResponse = require('../utils/response');
 const grandTotalAddFields = [
   { $addFields: {
     grandTotalAmount: {
-      $add: [
-        '$amount',
-        { $ifNull: ['$platformFee', 0] },
-        { $reduce: { input: { $ifNull: ['$additionalCharges', []] }, initialValue: 0, in: { $add: ['$$value', { $ifNull: ['$$this.amount', 0] }] } } }
+      $max: [
+        0,
+        {
+          $subtract: [
+            {
+              $add: [
+                { $ifNull: ['$amount', 0] },
+                { $ifNull: ['$platformFee', 0] },
+                { $reduce: { input: { $ifNull: ['$additionalCharges', []] }, initialValue: 0, in: { $add: ['$$value', { $ifNull: ['$$this.amount', 0] }] } } }
+              ]
+            },
+            { $ifNull: ['$discountAmount', 0] }
+          ]
+        }
       ]
     }
   }},

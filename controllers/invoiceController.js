@@ -2,6 +2,7 @@ const Invoice = require('../models/Invoice');
 const Client = require('../models/Client');
 const AuditLog = require('../models/AuditLog');
 const sendResponse = require('../utils/response');
+const { calculateInvoiceFields } = require('../utils/invoicePricing');
 
 const generateInvoiceNumber = async (type, serviceType) => {
   const now = new Date();
@@ -78,21 +79,9 @@ exports.getInvoiceById = async (req, res) => {
 exports.createInvoice = async (req, res) => {
   try {
     const invoiceNumber = await generateInvoiceNumber(req.body.type, req.body.serviceType);
-    const invoiceData = { ...req.body, invoiceNumber };
+    const calculated = calculateInvoiceFields(req.body, {}, { isCreate: true });
+    const invoiceData = { ...calculated, invoiceNumber };
     if (req.user) invoiceData.createdBy = req.user._id;
-
-    // Auto-calculate platform fee
-    if (invoiceData.amount && invoiceData.platformFeeRate) {
-      invoiceData.platformFee = Math.round(invoiceData.amount * (invoiceData.platformFeeRate / 100));
-    }
-
-    // Auto-calculate item amounts
-    if (invoiceData.items) {
-      invoiceData.items = invoiceData.items.map(item => ({
-        ...item,
-        amount: item.amount || (item.quantity || 1) * (item.unitPrice || 0)
-      }));
-    }
 
     const invoice = new Invoice(invoiceData);
     const savedInvoice = await invoice.save();
@@ -113,22 +102,7 @@ exports.updateInvoice = async (req, res) => {
 
     if (invoice.isLocked) return sendResponse(res, 403, false, 'Invoice is locked and cannot be edited');
 
-    const updateData = { ...req.body };
-
-    // Recalculate platform fee
-    if (updateData.amount !== undefined && updateData.platformFeeRate !== undefined) {
-      updateData.platformFee = Math.round(updateData.amount * (updateData.platformFeeRate / 100));
-    } else if (updateData.amount !== undefined && invoice.platformFeeRate) {
-      updateData.platformFee = Math.round(updateData.amount * (invoice.platformFeeRate / 100));
-    }
-
-    // Recalculate item amounts
-    if (updateData.items) {
-      updateData.items = updateData.items.map(item => ({
-        ...item,
-        amount: item.amount || (item.quantity || 1) * (item.unitPrice || 0)
-      }));
-    }
+    const updateData = calculateInvoiceFields(req.body, invoice);
 
     Object.assign(invoice, updateData);
     const updatedInvoice = await invoice.save();

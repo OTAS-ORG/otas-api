@@ -1,9 +1,16 @@
 const mongoose = require('mongoose');
+const { computeGrandTotal } = require('../utils/invoicePricing');
 
 const invoiceItemSchema = new mongoose.Schema({
   description: { type: String, required: true },
   quantity: { type: Number, default: 1 },
   unitPrice: { type: Number },
+  originalAmount: { type: Number },
+  isFoc: { type: Boolean, default: false },
+  discountType: { type: String, enum: ['none', 'fixed', 'percent'], default: 'none' },
+  discountValue: { type: Number, default: 0 },
+  discountAmount: { type: Number, default: 0 },
+  discountReason: { type: String, default: '' },
   amount: { type: Number, required: true },
   paymentTerm: { type: String },
   startDate: { type: Date },
@@ -36,6 +43,10 @@ const invoiceSchema = new mongoose.Schema({
 
   // Financials
   amount: { type: Number, required: true },
+  discountType: { type: String, enum: ['none', 'fixed', 'percent'], default: 'none' },
+  discountValue: { type: Number, default: 0 },
+  discountAmount: { type: Number, default: 0 },
+  discountReason: { type: String, default: '' },
   currency: { type: String, enum: ['MMK', 'USD'], default: 'MMK' },
   exchangeRate: { type: Number, default: 0 },
   platformFeeRate: { type: Number, default: 0 },
@@ -77,8 +88,7 @@ const invoiceSchema = new mongoose.Schema({
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
 invoiceSchema.virtual('grandTotal').get(function() {
-  const additionalTotal = (this.additionalCharges || []).reduce((sum, c) => sum + (c.amount || 0), 0);
-  return (this.amount || 0) + (this.platformFee || 0) + additionalTotal;
+  return computeGrandTotal(this);
 });
 
 invoiceSchema.index({ invoiceNumber: 1 });
